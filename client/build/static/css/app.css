@@ -1,0 +1,175 @@
+:root {
+  --bg: #0b0f1a;
+  --card: #101826;
+  --muted: #9fb0c9;
+  --text: #e9f0fb;
+  --primary: #3b82f6;
+  --primary-2: #60a5fa;
+  --ai: #22c55e;
+  --shadow: 0 10px 30px rgba(0,0,0,0.35);
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  background: radial-gradient(1200px 800px at 70% -20%, rgba(59,130,246,0.25), transparent 60%),
+              radial-gradient(1200px 800px at -20% 20%, rgba(34,197,94,0.2), transparent 60%),
+              var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+a { color: inherit; text-decoration: none; }
+.container { max-width: 1100px; padding: 0 20px; margin: 0 auto; }
+header { padding: 20px 0; display: flex; align-items: center; justify-content: space-between; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .2px; }
+.brand svg { width: 28px; height: 28px; }
+.nav { display: flex; align-items: center; gap: 18px; }
+.nav a { color: var(--muted); font-weight: 600; }
+.userBox { padding: 6px 10px; border-radius: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--text); display: inline-flex; align-items: center; gap: 10px; }
+.btn-link { padding: 8px 12px; border-radius: 8px; background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.35); color: #cfe1ff; font-weight: 700; }
+.btn-link.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.hero { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 32px; align-items: center; padding: 40px 0 10px; }
+.headline { font-size: clamp(32px, 5vw, 52px); line-height: 1.1; margin: 0 0 16px; }
+.sub { color: var(--muted); font-size: clamp(16px, 2.2vw, 18px); margin-bottom: 24px; }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn { padding: 12px 16px; border-radius: 10px; font-weight: 700; display: inline-flex; align-items: center; gap: 10px; }
+.btn.primary { background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: white; box-shadow: var(--shadow); }
+.btn.secondary { background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid rgba(255,255,255,0.08); }
+
+.mock { background: var(--card); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.chat-header { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; gap: 8px; }
+.chat-title { font-weight: 700; }
+.msgs { padding: 16px; display: grid; gap: 10px; max-height: 340px; overflow: hidden; }
+.msg { padding: 10px 12px; border-radius: 12px; max-width: 85%; width: fit-content; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+.msg.user { background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.35); margin-left: auto; }
+.msg.ai { background: rgba(34,197,94,0.16); border: 1px solid rgba(34,197,94,0.35); }
+.msg.sys { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); margin: 6px auto; font-size: 12px; color: var(--muted); }
+.composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(255,255,255,0.08); }
+.input { flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; color: var(--text); padding: 12px 12px; }
+.ask { background: rgba(34,197,94,0.16); border: 1px solid rgba(34,197,94,0.35); color: #dcffe8; }
+
+.features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 30px 0 60px; }
+.card { background: var(--card); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); }
+.card h3 { margin: 0 0 6px; }
+.card p { margin: 0; color: var(--muted); }
+
+footer { padding: 40px 0; color: var(--muted); font-size: 14px; text-align: center; }
+
+@media (max-width: 900px) {
+  .hero { grid-template-columns: 1fr; }
+  .msgs { max-height: none; }
+  .features { grid-template-columns: 1fr; }
+}
+
+/* Quick minimal styles for login modal */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: var(--card); border: 1px solid rgba(255,255,255,0.12); border-radius: var(--radius); box-shadow: var(--shadow); width: 90%; max-width: 420px; }
+.modal header { padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; }
+.modal .body { padding: 16px; display: grid; gap: 12px; }
+.modal .row { display: grid; gap: 6px; }
+.modal .row label { color: var(--muted); font-size: 14px; }
+.modal .actions { padding: 0 16px 16px; display: flex; gap: 10px; justify-content: flex-end; }
+.modal .error { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.35); color: #fecaca; padding: 10px 12px; border-radius: 10px; }
+.btn.outline { background: transparent; border: 1px solid rgba(255,255,255,0.18); color: var(--text); }
+/* Remove outline/shadow “box” around the login button in modal (all states) */
+#loginSubmitBtn { outline: none !important; box-shadow: none !important; -webkit-tap-highlight-color: transparent; }
+#loginSubmitBtn:focus,
+#loginSubmitBtn:focus-visible,
+#loginSubmitBtn:active { outline: none !important; box-shadow: none !important; }
+/* Firefox inner focus padding */
+#loginSubmitBtn::-moz-focus-inner { border: 0; }
+
+/* Remove outline/shadow box around the navbar login link */
+#loginLink { outline: none !important; box-shadow: none !important; -webkit-tap-highlight-color: transparent; }
+#loginLink:focus,
+#loginLink:focus-visible,
+#loginLink:active { outline: none !important; box-shadow: none !important; }
+#loginLink::-moz-focus-inner { border: 0; }
+
+/* Styled dropdown for profile color select used in React app */
+.gc-select {
+  background-color: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #e5e7eb;
+  border-radius: 8px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.gc-select:focus { outline: none; border-color: rgba(59,130,246,0.6); box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
+/* Try to ensure the dropdown menu itself uses a dark theme */
+.gc-select option { background: #0f172a; color: #e5e7eb; }
+.gc-select option:checked { background: #1e293b; color: #fff; }
+.gc-select::-ms-expand { display: none; }
+
+/* React app styles migrated from main.jsx */
+.gcapp-app { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans"; color: #e5e7eb; background: linear-gradient(180deg, #0f172a, #111827); min-height: 100vh; }
+.gcapp-container { width: 100%; max-width: 960px; margin: 32px auto; padding: 0 16px; }
+.gcapp-navbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: rgba(17,24,39,0.7); backdrop-filter: blur(6px); position: sticky; top: 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.gcapp-brand { font-weight: 700; color: #fff; letter-spacing: 0.4px; text-decoration: none; cursor: pointer; }
+.gcapp-navRight { display: flex; align-items: center; gap: 10px; }
+.gcapp-panel { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 24px; }
+.gcapp-authForm { display: grid; gap: 12px; max-width: 420px; }
+.gcapp-label { display: grid; gap: 6px; font-size: 14px; color: #9ca3af; }
+.gcapp-error { padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); color: #fecaca; }
+.gcapp-linkBtn { background: transparent; border: none; color: #e5e7eb; padding: 0; cursor: pointer; }
+.gcapp-avatar { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; font-size: 12px; }
+.gcapp-avatar-lg { width: 40px; height: 40px; font-size: 14px; }
+.gcapp-rel { position: relative; }
+.gcapp-dropdown { position: absolute; top: calc(100% + 6px); left: -10px; background: rgba(17,24,39,0.98); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; min-width: 180px; box-shadow: 0 10px 30px rgba(0,0,0,0.35); z-index: 50; }
+.gcapp-dropdown-item { display: block; width: 100%; text-align: left; padding: 8px 12px; background: transparent; color: #e5e7eb; border: none; cursor: pointer; }
+.gcapp-section { padding: 12px; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; }
+
+/* Utilities */
+.mt-0 { margin-top: 0 !important; }
+.mb-8 { margin-bottom: 8px !important; }
+.grid-16 { display: grid; gap: 16px; }
+.grid-10 { display: grid; gap: 10px; }
+.grid-6 { display: grid; gap: 6px; }
+.maxw-520 { max-width: 520px; }
+.flex-row-center { display: flex; align-items: center; gap: 12px; }
+.justify-end { display: flex; justify-content: flex-end; }
+
+/* Buttons disabled state */
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Inputs for React app */
+.gcapp-input { padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #e5e7eb; outline: none; }
+
+.mt-12 { margin-top: 12px; }
+
+
+/* React app buttons */
+.gcapp-btn { display: inline-block; padding: 8px 12px; border-radius: 8px; background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.35); color: #cfe1ff; font-weight: 600; cursor: pointer; text-decoration: none; }
+.gcapp-btnPrimary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+
+/* Color input in profile settings */
+.gc-color-input { width: 48px; height: 32px; padding: 0; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; background: transparent; }
+
+/* Utilities added to remove inline styles from HTML */
+.hidden { display: none !important; }
+.one-col { grid-template-columns: 1fr; }
+.card-narrow { max-width: 760px; margin: 0 auto; }
+.m-0 { margin: 0 !important; }
+.mt-0 { margin-top: 0 !important; }
+.mt-10 { margin-top: 10px !important; }
+.fs-12 { font-size: 12px !important; }
+.fw-700 { font-weight: 700 !important; }
+.muted { color: var(--muted) !important; }
+.grid { display: grid !important; }
+.flex { display: flex !important; }
+.flex-row-center { display: flex; align-items: center; gap: 12px; }
+.flex-sb-center { display: flex; align-items: center; justify-content: space-between; }
+.gap-12 { gap: 12px !important; }
+.gap-10 { gap: 10px !important; }
+.gap-8 { gap: 8px !important; }
+.flex-wrap { flex-wrap: wrap; }
+.justify-end { display: flex; justify-content: flex-end; }
+.px-16 { padding-left: 16px !important; padding-right: 16px !important; }
+.pad-16-b { padding-bottom: 16px !important; }
+.text-center { text-align: center !important; }
+.avatar-preview { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; }
+.chat-row { border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; }
+.rel-inline { position: relative; display: inline-block; }
+.btn-reset { background: transparent; border: none; color: inherit; font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
