@@ -61,3 +61,13 @@ Flask is already configured to serve:
   - `FLASK_RUN_PORT` (default `5000`)
   - `FLASK_DEBUG` (default `1`)
 - CORS is enabled via `flask-cors` for convenience during development.
+
+## SQL management
+- Queries are centralized in `sql/master.sql` using sections marked by lines like `-- name: query_key`.
+- The app loads SQL by key via `load_sql('query_key')` from `sql/master.sql`. All queries must be defined there; there is no fallback to individual files.
+- To add or modify a query:
+  1. Edit `sql/master.sql` and add a new section:
+     
+     -- name: my_new_query
+     SELECT ...;
+  2. Update code to call `load_sql('my_new_query')`.

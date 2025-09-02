@@ -16,23 +16,51 @@ from werkzeug.security import generate_password_hash, check_password_hash
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 BUILD_DIR = os.path.join(BASE_DIR, 'client', 'build')
 STATIC_DIR = os.path.join(BUILD_DIR, 'static')
-DATABASE = os.path.join(BASE_DIR, 'users.db')
+DATABASE = os.path.join(BASE_DIR, 'app.db')
 SQL_DIR = os.path.join(BASE_DIR, 'sql')
 
 # SQL loader
 _SQL_CACHE = {}
 
 def load_sql(name: str) -> str:
-    """Load an .sql file from the sql directory and cache it by name.
-    Example: load_sql('get_user_by_username') loads sql\get_user_by_username.sql
+    """Load SQL text by key from sql/master.sql.
+    Sections are marked by lines starting with "-- name: <key>".
+    Results are cached by key for the lifetime of the process.
     """
     if name in _SQL_CACHE:
         return _SQL_CACHE[name]
-    path = os.path.join(SQL_DIR, f"{name}.sql")
-    with open(path, 'r', encoding='utf-8') as f:
-        sql = f.read().strip()
-    _SQL_CACHE[name] = sql
-    return sql
+
+    # Try loading from master.sql once and cache all entries
+    master_path = os.path.join(SQL_DIR, 'master.sql')
+    if os.path.exists(master_path) and '_MASTER_PARSED' not in _SQL_CACHE:
+        try:
+            with open(master_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            current_key = None
+            buffer = []
+            def flush():
+                if current_key is not None:
+                    _SQL_CACHE[current_key] = '\n'.join(buffer).strip()
+            for line in content.splitlines():
+                if line.strip().lower().startswith('-- name:'):
+                    # new section begins
+                    flush()
+                    current_key = line.split(':', 1)[1].strip()
+                    buffer = []
+                else:
+                    buffer.append(line)
+            flush()
+            _SQL_CACHE['_MASTER_PARSED'] = '1'
+        except Exception as e:
+            # Surface an explicit error if master.sql cannot be parsed/read
+            raise RuntimeError(f"Failed to load or parse master.sql: {e}")
+
+    if name in _SQL_CACHE:
+        return _SQL_CACHE[name]
+
+    # No fallback to individual files; explicit error helps catch typos/missing queries
+    available = [k for k in _SQL_CACHE.keys() if not k.startswith('_')]
+    raise KeyError(f"SQL key '{name}' not found in master.sql. Available keys: {available}")
 
 # Create Flask app configured to serve the React build + JSON APIs
 app = Flask(
@@ -74,6 +102,8 @@ def init_db():
         # Ensure columns exist on users (lightweight auto-migration)
         cur = conn.execute(load_sql('pragma_table_info_users'))
         cols = [row[1] for row in cur.fetchall()]
+
+
         if 'profile_color' not in cols:
             conn.execute(load_sql('alter_table_add_profile_color'))
         if 'username' not in cols:
@@ -154,56 +184,36 @@ def me():
 def api_signup():
     data = request.get_json(silent=True) or {}
     name = (data.get('name') or '').strip()
-    username = (data.get('username') or '').strip().lower()
+    requested_username = (data.get('username') or '').strip().lower()
     password = data.get('password') or ''
 
-    if not name or not username or not password:
+    if not name or not requested_username or not password:
         return jsonify({'error': 'Name, username, and password are required.'}), 400
 
-    # Ensure username is unique; append numeric suffix if needed
-    candidate = username
-    if get_user_by_username(candidate):
-        # Try to find an available variant: username, username1, username2, ... up to 1000
-        for i in range(1, 1001):
-            cand = f"{username}{i}"
-            if not get_user_by_username(cand):
-                candidate = cand
-                break
-        else:
-            return jsonify({'error': 'Unable to generate a unique username. Please try a different one.'}), 409
-    username = candidate
-
+    # Allocate a unique username by attempting insertions until one succeeds.
+    base = requested_username
     password_hash = generate_password_hash(password)
     color = random_profile_color()
 
-    # Robust insert with retries: handle race conditions or DB collation mismatches by
-    # attempting to create the user and, on username uniqueness violations, retrying
-    # with incremented suffixes up to 1000.
-    base_username = username
-    user_id = None
-    last_error = None
-    for i in range(0, 1001):
-        cand = base_username if i == 0 else f"{base_username}{i}"
+    candidate = base
+    max_attempts = 50
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            candidate = f"{base}{attempt}"
         try:
-            user_id = create_user(name, cand, password_hash, color)
-            username = cand
+            user_id = create_user(name, candidate, password_hash, color)
             break
-        except sqlite3.IntegrityError as e:
-            # Inspect the error to decide whether to retry or fail immediately
-            msg = str(e).lower()
-            last_error = msg
-            if 'users.username' in msg or 'unique constraint failed: users.username' in msg or 'idx_users_username' in msg:
-                # Try next suffix
-                continue
-            # Unknown integrity error
-            return jsonify({'error': 'Unable to create user.'}), 409
+        except sqlite3.IntegrityError:
+            # Likely a unique username collision; try next candidate.
+            continue
     else:
-        return jsonify({'error': 'Unable to generate a unique username. Please try a different one.'}), 409
+        # If we exhausted attempts, something unusual is happening (e.g., DB issues).
+        return jsonify({'error': 'Unable to allocate a unique username at this time. Please try again later.'}), 500
 
     session['user'] = {
         'id': user_id,
         'name': name,
-        'username': username,
+        'username': candidate,
         'profile_color': color,
     }
     return jsonify({'user': session['user']}), 201
@@ -292,7 +302,7 @@ def api_update_profile():
             updates.append('password_hash = ?')
             params.append(generate_password_hash(password))
         if updates:
-            sql = load_sql('update_user_dynamic').format(set_clause=', '.join(updates))
+            sql = load_sql('update_user_dynamic').replace('/*SET_CLAUSE*/', ', '.join(updates))
             params.append(db_user['id'])
             conn.execute(sql, tuple(params))
             conn.commit()

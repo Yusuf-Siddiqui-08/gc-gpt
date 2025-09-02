@@ -1,1 +1,0 @@
-UPDATE users SET profile_color = ? WHERE id = ?;

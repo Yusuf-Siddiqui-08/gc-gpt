@@ -97,7 +97,7 @@ function Navbar({ user, onLogout, go }) {
   }, []);
   return (
     <nav className="gcapp-navbar">
-      <a className="gcapp-brand" onClick={() => go('/')}>MyApp</a>
+      <a className="gcapp-brand" onClick={() => go('/')}>Group Chat GPT</a>
       <div className="gcapp-navRight">
         {user ? (
           <>
