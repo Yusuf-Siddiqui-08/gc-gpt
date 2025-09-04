@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual envs
+.env
+.venv
+ENV/
+venv/
+
+# SQLite databases
+app.db
+*.db
+*.sqlite
+*.sqlite3
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# PyCharm/IDEA project files
+.idea/
+*.iml
+
+# Build artifacts
+client/build/
+
+# Logs
+*.log
