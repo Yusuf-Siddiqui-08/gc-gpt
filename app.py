@@ -23,15 +23,15 @@ SQL_DIR = os.path.join(BASE_DIR, 'sql')
 _SQL_CACHE = {}
 
 def load_sql(name: str) -> str:
-    """Load SQL text by key from sql/master.sql.
+    """Load SQL text by key from sql/main.sql.
     Sections are marked by lines starting with "-- name: <key>".
-    Results are cached by key for the lifetime of the process.
+    Key caches results for the lifetime of the process.
     """
     if name in _SQL_CACHE:
         return _SQL_CACHE[name]
 
-    # Try loading from master.sql once and cache all entries
-    master_path = os.path.join(SQL_DIR, 'master.sql')
+    # Try loading from main.sql once and cache all entries
+    master_path = os.path.join(SQL_DIR, 'main.sql')
     if os.path.exists(master_path) and '_MASTER_PARSED' not in _SQL_CACHE:
         try:
             with open(master_path, 'r', encoding='utf-8') as f:
@@ -52,15 +52,15 @@ def load_sql(name: str) -> str:
             flush()
             _SQL_CACHE['_MASTER_PARSED'] = '1'
         except Exception as e:
-            # Surface an explicit error if master.sql cannot be parsed/read
-            raise RuntimeError(f"Failed to load or parse master.sql: {e}")
+            # Surface an explicit error if main.sql cannot be parsed/read
+            raise RuntimeError(f"Failed to load or parse main.sql: {e}")
 
     if name in _SQL_CACHE:
         return _SQL_CACHE[name]
 
     # No fallback to individual files; explicit error helps catch typos/missing queries
     available = [k for k in _SQL_CACHE.keys() if not k.startswith('_')]
-    raise KeyError(f"SQL key '{name}' not found in master.sql. Available keys: {available}")
+    raise KeyError(f"SQL key '{name}' not found in main.sql. Available keys: {available}")
 
 # Create Flask app configured to serve the React build + JSON APIs
 app = Flask(
@@ -98,6 +98,12 @@ def init_db():
         conn.execute(load_sql('create_table_users'))
         conn.execute(load_sql('create_table_chats'))
         conn.execute(load_sql('create_table_chat_members'))
+        # Create messages table and index
+        try:
+            conn.execute(load_sql('create_table_messages'))
+            conn.execute(load_sql('create_index_messages_chat'))
+        except Exception:
+            pass
 
         # Ensure columns exist on users (lightweight auto-migration)
         cur = conn.execute(load_sql('pragma_table_info_users'))
@@ -334,6 +340,66 @@ def _list_user_chats(username: str):
         return rows
 
 
+def _get_chat_members(chat_id: str):
+    """Return members for a chat ordered by most recently joined (as a proxy for activity)."""
+    with get_db_connection() as conn:
+        cur = conn.execute(load_sql('list_chat_members'), (chat_id,))
+        members = [dict(row) for row in cur.fetchall()]
+        return members
+
+
+def _is_member(chat_id: str, username: str) -> bool:
+    with get_db_connection() as conn:
+        cur = conn.execute("SELECT 1 FROM chat_members WHERE chat_id = ? AND user_username = ?", (chat_id, username))
+        return cur.fetchone() is not None
+
+
+def _compute_avatar_layout(members):
+    """Compute avatar composition layout for UI.
+    Returns a dict with keys: type, users (list of usernames used), and positions (list of dicts)
+    where positions[i] corresponds to users[i] and provides x,y,r,overlap,zIndex.
+    X,y,r are normalized 0..1 units within a square, overlapping allowed.
+    """
+    users = [m['username'] for m in members]
+    n = len(users)
+    layout = {
+        'type': None,
+        'users': [],
+        'positions': []
+    }
+    if n <= 0:
+        return layout
+    if n == 1:
+        u = users[0]
+        layout['type'] = 'single'
+        layout['users'] = [u]
+        layout['positions'] = [
+            {'x': 0.5, 'y': 0.5, 'r': 0.5, 'overlap': 0.0, 'zIndex': 1}
+        ]
+        return layout
+    if n == 2:
+        # two-circle venn without the center (slight overlap)
+        sel = users[:2]
+        layout['type'] = 'double'
+        layout['users'] = sel
+        layout['positions'] = [
+            {'x': 0.40, 'y': 0.50, 'r': 0.50, 'overlap': 0.15, 'zIndex': 1},
+            {'x': 0.60, 'y': 0.50, 'r': 0.50, 'overlap': 0.15, 'zIndex': 2}
+        ]
+        return layout
+    # 3 or more: pick the last three active (members already ordered by joined_at desc)
+    sel = users[:3]
+    layout['type'] = 'triple'
+    layout['users'] = sel
+    # Tri-venn: equilateral triangle arrangement with overlaps
+    layout['positions'] = [
+        {'x': 0.50, 'y': 0.36, 'r': 0.45, 'overlap': 0.18, 'zIndex': 2},  # top
+        {'x': 0.34, 'y': 0.64, 'r': 0.45, 'overlap': 0.18, 'zIndex': 1},  # bottom-left
+        {'x': 0.66, 'y': 0.64, 'r': 0.45, 'overlap': 0.18, 'zIndex': 3},  # bottom-right
+    ]
+    return layout
+
+
 @app.route('/api/chats', methods=['GET'])
 def api_list_chats():
     user_session = session.get('user')
@@ -341,7 +407,113 @@ def api_list_chats():
         return jsonify({'error': 'Not authenticated.'}), 401
     username = user_session.get('username')
     items = _list_user_chats(username)
-    return jsonify({'chats': items})
+    # Enrich each chat with members and a computed avatar layout
+    enriched = []
+    for chat in items:
+        chat_id = chat['id']
+        members = _get_chat_members(chat_id)
+        layout = _compute_avatar_layout(members)
+        # Provide member meta with fallback avatar data (initials and color) for frontend use
+        member_slim = []
+        for m in members:
+            uname = m.get('username') or ''
+            display_name = m.get('name') or uname
+            color = m.get('profile_color') or random_profile_color()
+            initials = ''.join([part[0].upper() for part in display_name.split() if part][:2]) or (uname[:2].upper())
+            member_slim.append({
+                'username': uname,
+                'name': display_name,
+                'profile_color': color,
+                'initials': initials,
+            })
+        enriched.append({
+            **chat,
+            'members': member_slim,
+            'avatar_layout': layout,
+        })
+    return jsonify({'chats': enriched})
+
+
+@app.route('/api/chats/<chat_id>', methods=['GET'])
+def api_get_chat(chat_id):
+    user_session = session.get('user')
+    if not user_session:
+        return jsonify({'error': 'Not authenticated.'}), 401
+    with get_db_connection() as conn:
+        cur = conn.execute(load_sql('get_chat_by_id'), (chat_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'error': 'Chat not found.'}), 404
+        if not _is_member(chat_id, user_session.get('username')):
+            return jsonify({'error': 'Forbidden'}), 403
+        chat = dict(row)
+    members = _get_chat_members(chat_id)
+    return jsonify({'chat': {**chat, 'members': members}})
+
+
+@app.route('/api/chats/<chat_id>/messages', methods=['GET'])
+def api_list_messages(chat_id):
+    user_session = session.get('user')
+    if not user_session:
+        return jsonify({'error': 'Not authenticated.'}), 401
+    if not _is_member(chat_id, user_session.get('username')):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    # Optional lightweight change-detection mode
+    since_id = request.args.get('since_id', type=int)
+    check_only = request.args.get('check_only', default=0, type=int) == 1
+    if check_only and since_id is not None:
+        with get_db_connection() as conn:
+            latest_id = conn.execute("SELECT MAX(id) FROM messages WHERE chat_id = ?", (chat_id,)).fetchone()[0]
+        has_updates = latest_id is not None and latest_id > since_id
+        return jsonify({'has_updates': has_updates, 'latest_id': latest_id})
+
+    # pagination: before_id for backwards pagination (older messages)
+    before_id = request.args.get('before_id', type=int)
+    limit = request.args.get('limit', default=50, type=int)
+    limit = max(1, min(200, limit))
+    with get_db_connection() as conn:
+        cur = conn.execute(load_sql('list_messages_for_chat'), (chat_id, before_id, before_id, limit))
+        rows = [dict(r) for r in cur.fetchall()]
+    # Reverse to chronological ascending for rendering
+    rows.reverse()
+    # Annotate which messages belong to the current user to help UI alignment
+    current_username = (user_session.get('username') or '').lower()
+    for m in rows:
+        uname = (m.get('user_username') or m.get('username') or m.get('sender_username') or '').lower()
+        m['is_self'] = (uname == current_username)
+    return jsonify({'messages': rows})
+
+
+@app.route('/api/chats/<chat_id>/messages', methods=['POST'])
+def api_send_message(chat_id):
+    user_session = session.get('user')
+    if not user_session:
+        return jsonify({'error': 'Not authenticated.'}), 401
+    username = user_session.get('username')
+    if not _is_member(chat_id, username):
+        return jsonify({'error': 'Forbidden'}), 403
+    data = request.get_json(silent=True) or {}
+    content = (data.get('content') or '').strip()
+    reply_to = data.get('reply_to')
+    if not content:
+        return jsonify({'error': 'Message content is required.'}), 400
+    if reply_to is not None and not isinstance(reply_to, int):
+        reply_to = None
+    with get_db_connection() as conn:
+        cur = conn.execute(load_sql('insert_message'), (chat_id, username, content, reply_to))
+        msg_id = cur.lastrowid
+        conn.commit()
+        cur2 = conn.execute(load_sql('get_message_by_id'), (msg_id,))
+        row = cur2.fetchone()
+    msg = dict(row)
+    # hydrate sender meta
+    sender = get_user_by_username(username)
+    msg['sender_name'] = sender.get('name') if sender else username
+    msg['sender_profile_color'] = sender.get('profile_color') if sender else random_profile_color()
+    # mark as self for alignment on the client
+    msg['is_self'] = True
+    return jsonify({'message': msg}), 201
 
 
 @app.route('/api/chats', methods=['POST'])
@@ -390,7 +562,7 @@ def api_join_chat():
 
 @app.route('/api/admin/clear-db', methods=['POST'])
 def api_admin_clear_db():
-    # Protected endpoint to wipe users and chats. Requires ADMIN_TOKEN env and matching token in header or query.
+    # Protected endpoint to wipe users and chats. Requires ADMIN_TOKEN env and matching token in the header or query.
     admin_token = os.environ.get('ADMIN_TOKEN')
     provided = request.headers.get('X-Admin-Token') or request.args.get('token') or (request.get_json(silent=True) or {}).get('token')
     if not admin_token:
@@ -403,7 +575,7 @@ def api_admin_clear_db():
         users_before = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
         chats_before = conn.execute('SELECT COUNT(*) FROM chats').fetchone()[0]
         members_before = conn.execute('SELECT COUNT(*) FROM chat_members').fetchone()[0]
-        # Wipe in safe order (members -> chats -> users), though no FKs are enforced.
+        # Wipe in a safe order (members -> chats -> users), though no FKs are enforced.
         conn.execute('DELETE FROM chat_members')
         conn.execute('DELETE FROM chats')
         conn.execute('DELETE FROM users')
@@ -433,15 +605,21 @@ def serve_react(path):
     # Fallback to index.html for client-side routing
     index_path = os.path.join(BUILD_DIR, 'index.html')
     if os.path.exists(index_path):
-        return send_from_directory(BUILD_DIR, 'index.html')
+        # Serve the original index.html as generated by the client build
+        try:
+            return send_from_directory(BUILD_DIR, 'index.html')
+        except Exception:
+            # If any issue occurs, attempt to read and return the file contents
+            try:
+                with open(index_path, 'r', encoding='utf-8') as f:
+                    html = f.read()
+                return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
+            except Exception:
+                # As a last resort, 404
+                return 'index.html not found', 404
 
-    # Build missing: inform the user clearly
-    return (
-        'React build not found. Please create client/build/index.html or run your React build.\n'
-        'Expected directory: ' + BUILD_DIR,
-        404,
-        {'Content-Type': 'text/plain; charset=utf-8'}
-    )
+    # Build missing: no non-React fallback. Return 404 to enforce React-only frontend.
+    return 'Frontend build missing. Please build the React app.', 404
 
 
 # Initialize DB on startup

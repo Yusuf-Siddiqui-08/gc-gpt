@@ -20,9 +20,21 @@ app.db
 .DS_Store
 Thumbs.db
 
-# PyCharm/IDEA project files
+# JetBrains IDE (PyCharm/IDEA) project files
+# By default, ignore the entire .idea directory to avoid user-specific files being committed.
 .idea/
 *.iml
+
+# If you need to share only sanitized, minimal code style settings, you can opt-in to track
+# specific code style XMLs while keeping the rest of .idea ignored. One safe approach is to use
+# the following pattern (uncomment to use):
+#
+#   # Ignore everything inside .idea but allow code style XMLs
+#   .idea/*
+#   !.idea/codeStyles/
+#   !.idea/codeStyles/*.xml
+#
+# Make sure any committed XMLs contain no user- or machine-specific data.
 
 # Build artifacts
 client/build/

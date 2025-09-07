@@ -6,17 +6,125 @@
   <title>Group Chat GPT — AI inside your group chat</title>
   <meta name="description" content="Group Chat GPT lets your group chat like normal, and ask AI in the same conversation when you need it. No context switching." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a84ff'/%3E%3Cpath d='M18 23h28a3 3 0 0 1 3 3v16a3 3 0 0 1-3 3H30l-8 6v-6h-4a3 3 0 0 1-3-3V26a3 3 0 0 1 3-3z' fill='%23fff'/%3E%3Ccircle cx='25' cy='34' r='3' fill='%230a84ff'/%3E%3Ccircle cx='33' cy='34' r='3' fill='%230a84ff'/%3E%3Ccircle cx='41' cy='34' r='3' fill='%230a84ff'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="static/css/app.css" />
+  <link rel="stylesheet" href="/static/css/app.css" />
+  <style>
+    /* Limit chat bubbles width to half of the chat container */
+    .bubble { max-width: 50% !important; }
+  </style>
+  <script>
+    // Minimal error overlay so users never see a blank page if JS fails to load
+    (function(){
+      const style = document.createElement('style');
+      style.textContent = '.boot-error{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:99999;color:#fff;font-family:system-ui,Segoe UI,Roboto,sans-serif;padding:20px;text-align:left}.boot-error pre{white-space:pre-wrap;word-break:break-word;max-width:900px}';
+      document.head.appendChild(style);
+      function show(msg){
+        let el = document.getElementById('boot-error');
+        if(!el){ el = document.createElement('div'); el.id='boot-error'; el.className='boot-error'; document.body.appendChild(el); }
+        el.innerHTML = '<pre></pre>';
+        el.querySelector('pre').textContent = 'App failed to load.\n\n' + msg + '\n\nCheck console for details.';
+      }
+      window.addEventListener('error', function(e){ show(String(e.error ? e.error.stack || e.error : e.message || e).slice(0,5000)); });
+      window.addEventListener('unhandledrejection', function(e){ show(String(e.reason && (e.reason.stack || e.reason) || e).slice(0,5000)); });
+      // Also set a watchdog if module doesn’t mount within a short time
+      window.__APP_MOUNTED__ = false;
+      setTimeout(function(){ if(!window.__APP_MOUNTED__){ show('The frontend bundle did not mount. Possible causes: network error, wrong script path, MIME type mismatch, or JSX parse error.'); } }, 2500);
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>
-
-  <!-- React and ReactDOM from CDN -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <!-- Babel Standalone to transpile JSX in the browser (temporary) -->
+  <!-- React and ReactDOM as globals to avoid bundling -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel Standalone to transpile JSX in the browser (small apps/dev only) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Load our React entry. Consolidated JS now lives in main.jsx -->
-  <script type="text/babel" data-presets="env,react" src="static/js/main.jsx"></script>
+  <script>
+    // Tiny module loader that transpiles local .jsx files and rewrites imports to blob: URLs.
+    (function(){
+      const cache = new Map(); // url -> Promise<string blobUrl>
+
+      function hasExt(pathname){
+        const name = pathname.split('/').pop() || '';
+        return /\.[a-zA-Z0-9]+$/.test(name);
+      }
+
+      function escapeRegExp(s){
+        return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }
+
+      async function loadAndTranspile(url){
+        if(cache.has(url)) return cache.get(url);
+        const p = (async () => {
+          const res = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+          if(!res.ok){ throw new Error(`HTTP ${res.status} while loading ${url}`); }
+          let src = await res.text();
+
+          // Replace bare imports for react/react-dom with globals so no CDN ESM is required.
+          src = src.replace(/import\s+React\s+from\s+["']react["'];?/g, 'const React = window.React;');
+          // Handle both react-dom and react-dom/client
+          src = src.replace(/import\s+ReactDOM\s+from\s+["']react-dom(?:\/client)?["'];?/g, 'const ReactDOM = window.ReactDOM;');
+
+          // Collect import specifiers that are relative or absolute-path (starting with "." or "/")
+          const importRe = /import\s+(?:[^'"\n]+\s+from\s+)?["']([^"']+)["'];?|import\s*["']([^"']+)["'];?/g;
+          const base = new URL(url, window.location.origin);
+          const depSpecs = []; // original spec strings as they appear in source
+          const fetchUrls = []; // resolved URLs we will fetch
+
+          src.replace(importRe, (m, s1, s2) => {
+            const spec = s1 || s2;
+            if(!spec) return m;
+            // Skip non-relative and non-rooted specs (e.g., react)
+            if(!(spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('/'))) return m;
+            if(spec.startsWith('blob:')) return m; // already a blob URL
+            // Resolve to absolute URL for fetching
+            let abs = new URL(spec, base).href;
+            const u = new URL(abs);
+            if(!hasExt(u.pathname)){
+              // Assume .jsx for our raw copied sources
+              abs = abs + '.jsx';
+            }
+            depSpecs.push(spec);
+            fetchUrls.push(abs);
+            return m;
+          });
+
+          // Load and transpile dependencies first
+          const depBlobUrls = await Promise.all(fetchUrls.map(d => loadAndTranspile(d)));
+          // Build mapping from original spec -> blob url
+          const specToBlob = Object.fromEntries(depSpecs.map((s, i) => [s, depBlobUrls[i]]));
+
+          // Rewrite original import specifiers in source to their blob URLs
+          for(const [spec, blob] of Object.entries(specToBlob)){
+            const pattern = new RegExp(`(["'])${escapeRegExp(spec)}\\1`, 'g');
+            src = src.replace(pattern, `'${blob}'`);
+          }
+
+          // Transpile JSX to JS module
+          const out = Babel.transform(src, {
+            presets: ['react'],
+            sourceType: 'module',
+            filename: url
+          });
+          const blob = new Blob([out.code], { type: 'application/javascript' });
+            return URL.createObjectURL(blob);
+        })();
+        cache.set(url, p);
+        return p;
+      }
+
+      loadAndTranspile('/static/js/index.jsx')
+        .then(blobUrl => import(blobUrl))
+        .catch(err => {
+          console.error('Failed to load entry module:', err);
+          // Re-throw so our error overlay displays
+          setTimeout(() => { throw err; });
+        });
+    })();
+  </script>
+  <noscript>
+    <div style="color:#fff;background:#111827;padding:16px;border:1px solid rgba(255,255,255,0.12);border-radius:8px;margin:16px;font-family:system-ui,Segoe UI,Roboto,sans-serif;">
+      This app requires JavaScript. Please enable JavaScript to continue.
+    </div>
+  </noscript>
 </body>
 </html>

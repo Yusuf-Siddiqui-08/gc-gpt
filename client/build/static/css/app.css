@@ -10,14 +10,14 @@
   --radius: 14px;
 }
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html, body { height: 100%; overflow: hidden; }
 body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
   background: radial-gradient(1200px 800px at 70% -20%, rgba(59,130,246,0.25), transparent 60%),
               radial-gradient(1200px 800px at -20% 20%, rgba(34,197,94,0.2), transparent 60%),
-              var(--bg);
-  color: var(--text);
+              var(--bg, #0b0f1a);
+  color: var(--text, #e9f0fb);
   line-height: 1.6;
 }
 a { color: inherit; text-decoration: none; }
@@ -46,8 +46,24 @@ header { padding: 20px 0; display: flex; align-items: center; justify-content: s
 .msg.user { background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.35); margin-left: auto; }
 .msg.ai { background: rgba(34,197,94,0.16); border: 1px solid rgba(34,197,94,0.35); }
 .msg.sys { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); margin: 6px auto; font-size: 12px; color: var(--muted); }
-.composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(255,255,255,0.08); }
+.composer { display: flex; gap: 0; padding: 0; border-top: 1px solid rgba(255,255,255,0.08); }
 .input { flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; color: var(--text); padding: 12px 12px; }
+/* Chat composer input adjustments */
+.gc-composer-input {
+  width: 100%;
+  min-height: 44px;
+  max-height: 220px;
+  overflow-y: auto; /* keep scrollability */
+  overflow-x: hidden;
+  resize: none;
+  line-height: 1.4;
+  /* Hide scrollbars across browsers while retaining scroll */
+  scrollbar-width: none;       /* Firefox */
+  -ms-overflow-style: none;    /* IE 10+ / old Edge */
+}
+.gc-composer-input::-webkit-scrollbar { display: none; } /* Chrome, Safari, new Edge */
+/* Increase chatbox container available width */
+.gcapp-container { max-width: 1100px; }
 .ask { background: rgba(34,197,94,0.16); border: 1px solid rgba(34,197,94,0.35); color: #dcffe8; }
 
 .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 30px 0 60px; }
@@ -88,6 +104,99 @@ footer { padding: 40px 0; color: var(--muted); font-size: 14px; text-align: cent
 #loginLink:active { outline: none !important; box-shadow: none !important; }
 #loginLink::-moz-focus-inner { border: 0; }
 
+/* Ensure chat messages align correctly in messages list */
+#messages .msg { width: 100%; padding: 0; max-width: none; border-radius: 0; box-shadow: none; overflow: visible; }
+/* Hide scrollbars in chat messages container but keep scroll */
+#messages { scrollbar-width: none; -ms-overflow-style: none; padding: 0 10px; overflow-x: visible; }
+#messages::-webkit-scrollbar { display: none; }
+#messages .msg.me {
+  display: flex !important;
+  gap: 8px !important;
+  margin: 8px 0 !important;
+  width: 100% !important;
+  align-items: flex-end !important;
+  flex-direction: row !important;
+  justify-content: flex-end !important;
+  margin-left: auto !important;   /* push whole row to the far right */
+  text-align: right;
+}
+#messages .bubble.me {
+  margin-left: auto !important;   /* make the bubble hug the right edge */
+  margin-right: 0 !important;
+  align-self: flex-end;
+}
+
+/* Improve message bubble wrapping and sizing for long messages */
+#messages .bubble {
+  position: relative;                 /* needed for speech-tail */
+  padding: 10px 12px;                 /* inner spacing for readability */
+  border-radius: 16px;                /* rounded bubble */
+  max-width: 85% !important;          /* allow larger bubbles on wide screens */
+  width: fit-content;                 /* bubble shrinks to content up to max */
+  white-space: pre-wrap;              /* preserve newlines, wrap long lines */
+  word-break: break-word;             /* break long words if needed */
+  overflow-wrap: anywhere;            /* allow breaking anywhere for extreme long tokens */
+  overflow: visible;                  /* ensure tails are not clipped */
+  background-clip: padding-box;       /* avoid inner border artifacts near tail */
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+}
+
+/* Left (others) bubble style */
+#messages .bubble.other {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
+}
+/* Right (mine) bubble style */
+#messages .bubble.me {
+  background: rgba(59,130,246,0.18);
+  border: 1px solid rgba(59,130,246,0.35);
+  color: #e8f2ff;
+}
+
+/* Speech bubble tails removed per design request */
+/* Previously: ::after pseudo-elements created arrow tails on both sides. */
+
+/* Reply preview inside a bubble */
+#messages .bubble .replying {
+  font-size: 12px;
+  color: #cbd5e1;
+  background: rgba(255,255,255,0.05);
+  border-left: 3px solid rgba(148,163,184,0.5);
+  padding: 6px 8px;
+  border-radius: 8px;
+  margin: -2px 0 6px; /* tighter to the top of bubble */
+}
+
+@media (max-width: 700px) {
+  #messages .bubble { max-width: 92% !important; }
+}
+
+/* Fix avatar sizing/alignment inside messages */
+#messages .gcapp-avatar {
+  flex: 0 0 28px !important; /* fixed square; do not shrink or grow */
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 50% !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  font-weight: 700 !important;
+  font-size: 12px !important;
+  overflow: hidden !important; /* prevent text overflow from affecting shape */
+  align-self: flex-end !important; /* bottom-align with bubble even for tall messages */
+  margin-top: 6px !important; /* add a small gap on top of the profile picture under the chat message */
+}
+#messages .gcapp-avatar img { /* future-proof if images are ever used */
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 50% !important;
+}
+/* When avatar is inside the meta line, align it inline and remove the top gap */
+#messages .meta { display: flex; align-items: center; gap: 6px; }
+#messages .meta .gcapp-avatar { margin-top: 10px !important; margin-bottom: 10px !important; align-self: center !important; }
+
 /* Styled dropdown for profile color select used in React app */
 .gc-select {
   background-color: rgba(255,255,255,0.06);
@@ -104,8 +213,10 @@ footer { padding: 40px 0; color: var(--muted); font-size: 14px; text-align: cent
 .gc-select::-ms-expand { display: none; }
 
 /* React app styles migrated from main.jsx */
-.gcapp-app { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans"; color: #e5e7eb; background: linear-gradient(180deg, #0f172a, #111827); min-height: 100vh; }
-.gcapp-container { width: 100%; max-width: 960px; margin: 32px auto; padding: 0 16px; }
+.gc-chatlogo { position: relative; width: 42px; height: 42px; }
+.gc-chatlogo-circle { border-radius: 50%; }
+.gcapp-app { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans"; color: #e5e7eb; background: linear-gradient(180deg, #0f172a, #111827); min-height: 100vh; height: 100vh; overflow: hidden; }
+.gcapp-container { width: 100%; max-width: 1500px; margin: 32px auto; padding: 0 16px; height: calc(100vh - 64px); overflow: hidden; }
 .gcapp-navbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: rgba(17,24,39,0.7); backdrop-filter: blur(6px); position: sticky; top: 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .gcapp-brand { font-weight: 700; color: #fff; letter-spacing: 0.4px; text-decoration: none; cursor: pointer; }
 .gcapp-navRight { display: flex; align-items: center; gap: 10px; }
@@ -139,6 +250,25 @@ footer { padding: 40px 0; color: var(--muted); font-size: 14px; text-align: cent
 
 .mt-12 { margin-top: 12px; }
 
+
+/* Composer left circular button */
+.gc-composer-left {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 4px 8px 4px 0;
+  background: rgba(59,130,246,0.12);
+  border: 1px solid rgba(59,130,246,0.35);
+  color: #cfe1ff;
+  cursor: pointer;
+}
+.gc-composer-left:hover { background: rgba(59,130,246,0.22); }
+.gc-composer-left:focus { outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
+.gc-composer-left svg { display: block; }
 
 /* React app buttons */
 .gcapp-btn { display: inline-block; padding: 8px 12px; border-radius: 8px; background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.35); color: #cfe1ff; font-weight: 600; cursor: pointer; text-decoration: none; }
