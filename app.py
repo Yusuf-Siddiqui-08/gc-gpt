@@ -711,6 +711,17 @@ def api_admin_clear_db():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_react(path):
+    # Explicitly handle /static/* paths first - serve from BUILD_DIR/static
+    if path.startswith('static/'):
+        # Extract the relative path after 'static/'
+        static_path = path[7:]  # Remove 'static/' prefix
+        static_file = os.path.join(STATIC_DIR, static_path)
+        if os.path.exists(static_file) and os.path.isfile(static_file):
+            # Determine directory and filename for send_from_directory
+            dir_path = os.path.dirname(static_file)
+            file_name = os.path.basename(static_file)
+            return send_from_directory(dir_path, file_name)
+
     # If the request is for a file within the build folder, serve it directly
     requested_path = os.path.join(BUILD_DIR, path)
     if path and os.path.exists(requested_path) and os.path.isfile(requested_path):
