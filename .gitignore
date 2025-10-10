@@ -36,8 +36,5 @@ Thumbs.db
 #
 # Make sure any committed XMLs contain no user- or machine-specific data.
 
-# Build artifacts
-client/build/
-
 # Logs
 *.log
