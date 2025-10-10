@@ -769,7 +769,7 @@ if __name__ == '__main__':
     # Read host and port from env if provided (useful for deployment)
     # Railway and other cloud platforms require binding to 0.0.0.0 and using PORT env var
     host = os.environ.get('FLASK_RUN_HOST', '0.0.0.0')
-    port = int(os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', '5000')))
+    port = int(os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', '8080')))
     debug = os.environ.get('FLASK_DEBUG', '0') == '1'
 
     # Optionally clear DBs only when running as the main program (avoid clearing on import/reloader)
