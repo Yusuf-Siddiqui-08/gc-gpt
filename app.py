@@ -2,6 +2,7 @@ import os
 import sqlite3
 import random
 import secrets
+import re
 from flask import (
     Flask,
     send_from_directory,
@@ -11,6 +12,7 @@ from flask import (
 )
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
+from ChatAgent import ChatAgent
 
 # Paths
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -18,6 +20,12 @@ BUILD_DIR = os.path.join(BASE_DIR, 'client', 'build')
 STATIC_DIR = os.path.join(BUILD_DIR, 'static')
 DATABASE = os.path.join(BASE_DIR, 'app.db')
 SQL_DIR = os.path.join(BASE_DIR, 'sql')
+
+# ChatAgent configuration
+CHAT_MODEL = "gemma3:latest"
+
+def get_chat_agent(messages=None):
+    return ChatAgent(model=CHAT_MODEL, messages=messages)
 
 # SQL loader
 _SQL_CACHE = {}
@@ -237,7 +245,7 @@ def api_login():
     user = get_user_by_username(username)
 
     if not user or not check_password_hash(user['password_hash'], password):
-        return jsonify({'error': 'Invalid credentials.'}), 401
+        return jsonify({'error': 'Invalid username or password.'}), 401
 
     color = user.get('profile_color')
     if not color:
@@ -245,7 +253,6 @@ def api_login():
         try:
             update_user_profile_color(user['id'], color)
         except Exception:
-            # If update fails, still proceed with a generated color for the session
             pass
     session['user'] = {
         'name': user['name'],
@@ -320,6 +327,54 @@ def api_update_profile():
     }
     session['user'] = updated
     return jsonify({'user': updated}), 200
+
+
+def format_ai_response(text: str) -> str:
+    """Format AI response by converting markdown-style formatting to HTML."""
+    if not text:
+        return text
+
+    # Convert markdown links: [text](url) -> <a href="url">text</a>
+    # This must be done BEFORE plain URL conversion to avoid double-processing
+    markdown_link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
+    text = re.sub(markdown_link_pattern, r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>', text)
+
+    # Convert bold: **text** -> <strong>text</strong>
+    text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+
+    # Convert italic: *text* -> <em>text</em>
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<em>\1</em>', text)
+
+    # Convert inline code: `code` -> <code>code</code>
+    text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
+
+    # Convert plain URLs to clickable links
+    # Only match URLs that are NOT already inside an href attribute or anchor tag
+    # Use a more robust negative lookbehind and lookahead
+    def replace_url(match):
+        url = match.group(0)
+        # Add protocol if missing
+        href = url if url.startswith('http') else f'http://{url}'
+        return f'<a href="{href}" target="_blank" rel="noopener noreferrer">{url}</a>'
+
+    # Split by existing anchor tags to avoid double-encoding
+    parts = re.split(r'(<a [^>]*>.*?</a>)', text)
+    for i in range(len(parts)):
+        # Only process parts that are NOT anchor tags
+        if not parts[i].startswith('<a '):
+            # Match URLs not already in quotes (href attributes)
+            url_pattern = r'(?<!["\'>])(https?://[^\s<>"]+|(?<!href=")www\.[^\s<>"]+)(?!["\'])'
+            parts[i] = re.sub(url_pattern, replace_url, parts[i])
+
+    text = ''.join(parts)
+
+    # Convert bullet points (-, *, +) at the start of lines to • symbol
+    text = re.sub(r'^[\-\*\+]\s+', r'• ', text, flags=re.MULTILINE)
+
+    # Convert line breaks to <br> tags
+    text = text.replace('\n', '<br>')
+
+    return text
 
 
 # Chat helpers and APIs
@@ -500,6 +555,8 @@ def api_send_message(chat_id):
         return jsonify({'error': 'Message content is required.'}), 400
     if reply_to is not None and not isinstance(reply_to, int):
         reply_to = None
+    
+    # Store the user's message
     with get_db_connection() as conn:
         cur = conn.execute(load_sql('insert_message'), (chat_id, username, content, reply_to))
         msg_id = cur.lastrowid
@@ -513,6 +570,64 @@ def api_send_message(chat_id):
     msg['sender_profile_color'] = sender.get('profile_color') if sender else random_profile_color()
     # mark as self for alignment on the client
     msg['is_self'] = True
+    
+    # Check if message starts with /AI
+    if content.startswith('/AI'):
+        # Extract the actual message without /AI prefix
+        ai_query = content[3:].strip()
+        if ai_query:
+            try:
+                # Get chat history for context (excluding the current message we just inserted)
+                with get_db_connection() as conn:
+                    cur = conn.execute(load_sql('list_messages_for_chat'), (chat_id, msg_id, msg_id, 20))
+                    history_rows = [dict(r) for r in cur.fetchall()]
+                
+                # Build message history for ChatAgent
+                chat_history = []
+                for h_msg in reversed(history_rows[-10:]):  # Use last 10 messages for context
+                    role = "assistant" if h_msg.get('user_username') == 'AI' else "user"
+                    chat_history.append({
+                        "role": role,
+                        "content": h_msg.get('content', '')
+                    })
+                
+                # Filter chat history to only include messages relevant to the current query
+                filtered_history = ChatAgent.filter_relevant_messages(
+                    query=ai_query,
+                    messages=chat_history,
+                    model=CHAT_MODEL,
+                    max_messages=6  # Limit to most recent relevant messages
+                )
+
+                # Create ChatAgent with filtered history and send message
+                agent = get_chat_agent(messages=filtered_history)
+                response = agent.send_message(ai_query)
+                ai_response = agent.get_last_assistant_message()
+                
+                if ai_response:
+                    # Format the AI response (convert markdown to HTML)
+                    formatted_response = format_ai_response(ai_response)
+
+                    # Insert AI response as a message from "AI" user
+                    with get_db_connection() as conn:
+                        cur = conn.execute(load_sql('insert_message'), (chat_id, 'AI', formatted_response, msg_id))
+                        ai_msg_id = cur.lastrowid
+                        conn.commit()
+                        cur2 = conn.execute(load_sql('get_message_by_id'), (ai_msg_id,))
+                        ai_row = cur2.fetchone()
+                    
+                    ai_msg = dict(ai_row)
+                    ai_msg['sender_name'] = 'AI'
+                    ai_msg['sender_profile_color'] = '#3b82f6'  # Blue color for AI
+                    ai_msg['is_self'] = False
+                    
+                    # Return both messages
+                    return jsonify({'message': msg, 'ai_message': ai_msg}), 201
+            except Exception as e:
+                # If AI processing fails, just return the user's message
+                print(f"AI processing error: {e}")
+                pass
+    
     return jsonify({'message': msg}), 201
 
 
