@@ -1,15 +1,20 @@
 from typing import List, Dict, Optional, Literal
 from ollama import Client
+import os
 
 ROLE_USER: Literal["user"] = "user"
 ROLE_ASSISTANT: Literal["assistant"] = "assistant"
 
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
 
 class ChatAgent:
     def __init__(self, model: str, messages: Optional[List[Dict[str, str]]] = None):
         self.model: str = model
         self.messages: List[Dict[str, str]] = list(messages) if messages is not None else []
-        self.client: Client = Client()
+        self.client: Client = Client(
+            host="https://ollama.com",
+            headers={'Authorization': 'Bearer ' + OLLAMA_API_KEY}
+        )
 
     def _make_message(self, role: Literal["user", "assistant"], content: str) -> Dict[str, str]:
         return {"role": role, "content": content}
@@ -83,7 +88,10 @@ class ChatAgent:
             relevant_indices.add(len(conversation_pairs) - 1)
 
         # Use LLM to score relevance of earlier conversation pairs
-        client = Client()
+        client = Client(
+            host="https://ollama.com",
+            headers={'Authorization': 'Bearer ' + OLLAMA_API_KEY}
+        )
         for idx, pair in enumerate(conversation_pairs[:-1]):  # Skip the last one (already added)
             # Create a more precise prompt to check relevance
             relevance_prompt = f"""Analyze if this previous conversation is relevant to the current query.
