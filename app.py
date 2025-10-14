@@ -79,7 +79,15 @@ app = Flask(
     static_url_path='/static'
 )
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
-CORS(app)
+
+# Configure session cookies for production (Railway deployment)
+# These settings ensure sessions work correctly with HTTPS and cross-origin requests
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'True').lower() == 'true'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Allow cookies with same-site navigation
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours
+
+CORS(app, supports_credentials=True, origins=['*'])  # Enable credentials for CORS
 
 
 def get_db_connection():
@@ -233,6 +241,7 @@ def api_signup():
         'username': candidate,
         'profile_color': color,
     }
+    session.permanent = True
     return jsonify({'user': session['user']}), 201
 
 
@@ -262,6 +271,7 @@ def api_login():
         'username': user['username'],
         'profile_color': color,
     }
+    session.permanent = True
     return jsonify({'user': session['user']}), 200
 
 
