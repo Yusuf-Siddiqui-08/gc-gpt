@@ -394,6 +394,13 @@ function Chat({ chatId, user, go }) {
     loadChat();
   }, [chatId, user]);
 
+  // Trigger MathJax typesetting when messages change
+  useEffect(() => {
+    if (window.MathJax && window.MathJax.typesetPromise) {
+      window.MathJax.typesetPromise().catch((err) => console.error('MathJax typeset error:', err));
+    }
+  }, [messages]);
+
   async function loadChat() {
     try {
       setLoading(true);
@@ -586,7 +593,7 @@ function Chat({ chatId, user, go }) {
         disabled: sending || !newMessage.trim(),
         className: 'btn primary',
         style: { borderRadius: 25 }
-      }, sending ? 'Sending...' : 'Send')
+      }, sending ? 'Thinking...' : 'Send')
     )
   );
 }
@@ -873,4 +880,3 @@ if (rootElement) {
 
 // Signal that the app has mounted successfully
 window.__APP_MOUNTED__ = true;
-

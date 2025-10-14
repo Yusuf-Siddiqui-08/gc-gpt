@@ -1,6 +1,5 @@
 from typing import List, Dict, Optional, Literal
-from ollama import chat
-from ollama import ChatResponse
+from ollama import Client
 
 ROLE_USER: Literal["user"] = "user"
 ROLE_ASSISTANT: Literal["assistant"] = "assistant"
@@ -10,6 +9,7 @@ class ChatAgent:
     def __init__(self, model: str, messages: Optional[List[Dict[str, str]]] = None):
         self.model: str = model
         self.messages: List[Dict[str, str]] = list(messages) if messages is not None else []
+        self.client: Client = Client()
 
     def _make_message(self, role: Literal["user", "assistant"], content: str) -> Dict[str, str]:
         return {"role": role, "content": content}
@@ -17,11 +17,11 @@ class ChatAgent:
     def _append_message(self, role: Literal["user", "assistant"], content: str) -> None:
         self.messages.append(self._make_message(role, content))
 
-    def send_message(self, message: str) -> Optional[ChatResponse]:
+    def send_message(self, message: str) -> Optional[Dict]:
         self._append_message(ROLE_USER, message)
-        response: ChatResponse = chat(model=self.model, messages=self.messages)
-        # response.message.content exists in Ollama's response object; add guard in case of unexpected shape
-        assistant_content: str = getattr(getattr(response, "message", None), "content", "")
+        response = self.client.chat(model=self.model, messages=self.messages)
+        # response is a dict with 'message' key containing 'content'
+        assistant_content: str = response.get("message", {}).get("content", "")
         self._append_message(ROLE_ASSISTANT, assistant_content)
         return response
 
@@ -83,6 +83,7 @@ class ChatAgent:
             relevant_indices.add(len(conversation_pairs) - 1)
 
         # Use LLM to score relevance of earlier conversation pairs
+        client = Client()
         for idx, pair in enumerate(conversation_pairs[:-1]):  # Skip the last one (already added)
             # Create a more precise prompt to check relevance
             relevance_prompt = f"""Analyze if this previous conversation is relevant to the current query.
@@ -104,11 +105,11 @@ Important:
 Answer ONLY with 'yes' or 'no'."""
 
             try:
-                relevance_check = chat(
+                relevance_check = client.chat(
                     model=model,
                     messages=[{"role": "user", "content": relevance_prompt}]
                 )
-                answer = getattr(getattr(relevance_check, "message", None), "content", "").strip().lower()
+                answer = relevance_check.get("message", {}).get("content", "").strip().lower()
 
                 if 'yes' in answer:
                     relevant_indices.add(idx)

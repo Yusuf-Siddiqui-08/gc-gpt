@@ -3,6 +3,7 @@ import sqlite3
 import random
 import secrets
 import re
+import markdown
 from flask import (
     Flask,
     send_from_directory,
@@ -22,7 +23,8 @@ DATABASE = os.path.join(BASE_DIR, 'app.db')
 SQL_DIR = os.path.join(BASE_DIR, 'sql')
 
 # ChatAgent configuration
-CHAT_MODEL = "gemma3:latest"
+CHAT_MODEL = "deepseek-v3.1:671b-cloud"
+CHAT_MODEL_DISPLAY_NAME = "DeepSeek-V3.1 (671b Cloud)"
 
 def get_chat_agent(messages=None):
     return ChatAgent(model=CHAT_MODEL, messages=messages)
@@ -211,6 +213,7 @@ def api_signup():
 
     candidate = base
     max_attempts = 50
+    user_id = None
     for attempt in range(max_attempts):
         if attempt > 0:
             candidate = f"{base}{attempt}"
@@ -330,51 +333,85 @@ def api_update_profile():
 
 
 def format_ai_response(text: str) -> str:
-    """Format AI response by converting markdown-style formatting to HTML."""
+    """Format AI response by converting markdown to HTML with support for tables, LaTeX, code blocks, etc."""
     if not text:
         return text
 
-    # Convert markdown links: [text](url) -> <a href="url">text</a>
-    # This must be done BEFORE plain URL conversion to avoid double-processing
-    markdown_link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
-    text = re.sub(markdown_link_pattern, r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>', text)
+    # Protect LaTeX equations by replacing them with placeholders
+    latex_blocks = []
 
-    # Convert bold: **text** -> <strong>text</strong>
-    text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+    def save_latex_display(match):
+        """Save display math equations \\[ ... \\] or $$ ... $$"""
+        latex_blocks.append(('display', match.group(1)))
+        # Use HTML comments as placeholders to survive markdown processing
+        return f"<!--LATEX_DISPLAY_{len(latex_blocks) - 1}-->"
 
-    # Convert italic: *text* -> <em>text</em>
-    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<em>\1</em>', text)
+    def save_latex_inline(match):
+        """Save inline math equations \\( ... \\) or $ ... $"""
+        latex_blocks.append(('inline', match.group(1)))
+        return f"<!--LATEX_INLINE_{len(latex_blocks) - 1}-->"
 
-    # Convert inline code: `code` -> <code>code</code>
-    text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
+    # Match and save LaTeX display equations: \[ ... \] or $$ ... $$
+    text = re.sub(r'\\\[(.*?)\\\]', save_latex_display, text, flags=re.DOTALL)
+    text = re.sub(r'\$\$(.*?)\$\$', save_latex_display, text, flags=re.DOTALL)
 
-    # Convert plain URLs to clickable links
-    # Only match URLs that are NOT already inside an href attribute or anchor tag
-    # Use a more robust negative lookbehind and lookahead
-    def replace_url(match):
-        url = match.group(0)
-        # Add protocol if missing
-        href = url if url.startswith('http') else f'http://{url}'
-        return f'<a href="{href}" target="_blank" rel="noopener noreferrer">{url}</a>'
+    # Match and save inline equations: \( ... \) or $ ... $
+    text = re.sub(r'\\\((.*?)\\\)', save_latex_inline, text, flags=re.DOTALL)
+    text = re.sub(r'(?<!\$)\$(?!\$)([^$\n]+?)\$', save_latex_inline, text)
 
-    # Split by existing anchor tags to avoid double-encoding
-    parts = re.split(r'(<a [^>]*>.*?</a>)', text)
-    for i in range(len(parts)):
-        # Only process parts that are NOT anchor tags
-        if not parts[i].startswith('<a '):
-            # Match URLs not already in quotes (href attributes)
-            url_pattern = r'(?<!["\'>])(https?://[^\s<>"]+|(?<!href=")www\.[^\s<>"]+)(?!["\'])'
-            parts[i] = re.sub(url_pattern, replace_url, parts[i])
+    # Use markdown library with extensions for tables, fenced code blocks, and other features
+    html = markdown.markdown(
+        text,
+        extensions=[
+            'extra',      # Includes tables, fenced code blocks, abbreviations, etc.
+            'nl2br',      # Convert newlines to <br> tags
+            'sane_lists', # Better list handling
+        ]
+    )
 
-    text = ''.join(parts)
+    # Add styling to tables
+    html = html.replace('<table>', '<table style="border-collapse: collapse; width: 100%; margin: 10px 0; border: 1px solid #ddd;">')
+    html = html.replace('<th>', '<th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2; text-align: left; color: #000;">')
+    html = html.replace('<td>', '<td style="border: 1px solid #ddd; padding: 8px;">')
 
-    # Convert bullet points (-, *, +) at the start of lines to • symbol
-    text = re.sub(r'^[\-\*\+]\s+', r'• ', text, flags=re.MULTILINE)
+    # Add styling to code blocks
+    html = html.replace('<code>', '<code style="background-color: #f4f4f4; padding: 2px 4px; border-radius: 3px; font-family: monospace;">')
+    html = html.replace('<pre>', '<pre style="background-color: #f4f4f4; padding: 10px; border-radius: 5px; overflow-x: auto; margin: 10px 0;">')
 
-    # Convert line breaks to <br> tags
-    text = text.replace('\n', '<br>')
+    # Add styling to headers
+    html = html.replace('<h1>', '<h1 style="margin-top: 20px; margin-bottom: 10px; font-size: 2em; font-weight: bold;">')
+    html = html.replace('<h2>', '<h2 style="margin-top: 18px; margin-bottom: 8px; font-size: 1.5em; font-weight: bold;">')
+    html = html.replace('<h3>', '<h3 style="margin-top: 16px; margin-bottom: 6px; font-size: 1.25em; font-weight: bold;">')
+    html = html.replace('<h4>', '<h4 style="margin-top: 14px; margin-bottom: 4px; font-size: 1.1em; font-weight: bold;">')
 
-    return text
+    # Add styling to horizontal rules
+    html = html.replace('<hr />', '<hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;" />')
+    html = html.replace('<hr>', '<hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">')
+
+    # Add styling to lists
+    html = html.replace('<ul>', '<ul style="margin: 10px 0; padding-left: 20px;">')
+    html = html.replace('<ol>', '<ol style="margin: 10px 0; padding-left: 20px;">')
+    html = html.replace('<li>', '<li style="margin: 4px 0;">')
+
+    # Add target="_blank" to all links
+    html = re.sub(r'<a href="([^"]*)">', r'<a href="\1" target="_blank" rel="noopener noreferrer">', html)
+
+    # Restore LaTeX equations with proper delimiters for MathJax/KaTeX
+    for i, (latex_type, latex_content) in enumerate(latex_blocks):
+        if latex_type == 'display':
+            # Use display math delimiters that MathJax/KaTeX will recognize
+            placeholder = f"<!--LATEX_DISPLAY_{i}-->"
+            latex_html = f'<div class="math-display" style="margin: 15px 0; text-align: center; overflow-x: auto;">\\[{latex_content}\\]</div>'
+            html = html.replace(placeholder, latex_html)
+        else:  # inline
+            # Use inline math delimiters
+            placeholder = f"<!--LATEX_INLINE_{i}-->"
+            latex_html = f'<span class="math-inline">\\({latex_content}\\)</span>'
+            html = html.replace(placeholder, latex_html)
+
+    return html
+
+
 
 
 # Chat helpers and APIs
@@ -460,7 +497,7 @@ def api_list_chats():
     user_session = session.get('user')
     if not user_session:
         return jsonify({'error': 'Not authenticated.'}), 401
-    username = user_session.get('username')
+    username = user_session.get('username') or ''
     items = _list_user_chats(username)
     # Enrich each chat with members and a computed avatar layout
     enriched = []
@@ -511,7 +548,8 @@ def api_list_messages(chat_id):
     user_session = session.get('user')
     if not user_session:
         return jsonify({'error': 'Not authenticated.'}), 401
-    if not _is_member(chat_id, user_session.get('username')):
+    username = user_session.get('username') or ''
+    if not _is_member(chat_id, username):
         return jsonify({'error': 'Forbidden'}), 403
 
     # Optional lightweight change-detection mode
@@ -617,7 +655,7 @@ def api_send_message(chat_id):
                         ai_row = cur2.fetchone()
                     
                     ai_msg = dict(ai_row)
-                    ai_msg['sender_name'] = 'AI'
+                    ai_msg['sender_name'] = f'AI - {CHAT_MODEL_DISPLAY_NAME}'
                     ai_msg['sender_profile_color'] = '#3b82f6'  # Blue color for AI
                     ai_msg['is_self'] = False
                     
@@ -641,7 +679,7 @@ def api_create_chat():
     password = data.get('password') or ''
     if not name or not password:
         return jsonify({'error': 'Name and password are required.'}), 400
-    username = user_session.get('username')
+    username = user_session.get('username') or ''
     with get_db_connection() as conn:
         chat_id = _generate_chat_id(conn)
         pw_hash = generate_password_hash(password)
@@ -669,7 +707,7 @@ def api_join_chat():
         chat = dict(row)
         if not check_password_hash(chat['password_hash'], password):
             return jsonify({'error': 'Invalid chat password.'}), 403
-        username = user_session.get('username')
+        username = user_session.get('username') or ''
         conn.execute(load_sql('insert_chat_member'), (chat_id, username))
         conn.commit()
         return jsonify({'chat': {'id': chat_id, 'name': chat['name']}}), 200
