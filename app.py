@@ -2,8 +2,6 @@ import os
 import sqlite3
 import random
 import secrets
-import re
-import markdown
 from flask import (
     Flask,
     send_from_directory,
@@ -14,6 +12,7 @@ from flask import (
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from ChatAgent import ChatAgent
+from ResponseFormatter import ResponseFormatter
 
 # Paths
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -342,84 +341,6 @@ def api_update_profile():
     return jsonify({'user': updated}), 200
 
 
-def format_ai_response(text: str) -> str:
-    """Format AI response by converting markdown to HTML with support for tables, LaTeX, code blocks, etc."""
-    if not text:
-        return text
-
-    # Protect LaTeX equations by replacing them with placeholders
-    latex_blocks = []
-
-    def save_latex_display(match):
-        """Save display math equations \\[ ... \\] or $$ ... $$"""
-        latex_blocks.append(('display', match.group(1)))
-        # Use HTML comments as placeholders to survive markdown processing
-        return f"<!--LATEX_DISPLAY_{len(latex_blocks) - 1}-->"
-
-    def save_latex_inline(match):
-        """Save inline math equations \\( ... \\) or $ ... $"""
-        latex_blocks.append(('inline', match.group(1)))
-        return f"<!--LATEX_INLINE_{len(latex_blocks) - 1}-->"
-
-    # Match and save LaTeX display equations: \[ ... \] or $$ ... $$
-    text = re.sub(r'\\\[(.*?)\\\]', save_latex_display, text, flags=re.DOTALL)
-    text = re.sub(r'\$\$(.*?)\$\$', save_latex_display, text, flags=re.DOTALL)
-
-    # Match and save inline equations: \( ... \) or $ ... $
-    text = re.sub(r'\\\((.*?)\\\)', save_latex_inline, text, flags=re.DOTALL)
-    text = re.sub(r'(?<!\$)\$(?!\$)([^$\n]+?)\$', save_latex_inline, text)
-
-    # Use markdown library with extensions for tables, fenced code blocks, and other features
-    html = markdown.markdown(
-        text,
-        extensions=[
-            'extra',      # Includes tables, fenced code blocks, abbreviations, etc.
-            'nl2br',      # Convert newlines to <br> tags
-            'sane_lists', # Better list handling
-        ]
-    )
-
-    # Add styling to tables
-    html = html.replace('<table>', '<table style="border-collapse: collapse; width: 100%; margin: 10px 0; border: 1px solid #ddd;">')
-    html = html.replace('<th>', '<th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2; text-align: left; color: #000;">')
-    html = html.replace('<td>', '<td style="border: 1px solid #ddd; padding: 8px;">')
-
-    # Add styling to code blocks
-    html = html.replace('<code>', '<code style="background-color: #f4f4f4; padding: 2px 4px; border-radius: 3px; font-family: monospace;">')
-    html = html.replace('<pre>', '<pre style="background-color: #f4f4f4; padding: 10px; border-radius: 5px; overflow-x: auto; margin: 10px 0;">')
-
-    # Add styling to headers
-    html = html.replace('<h1>', '<h1 style="margin-top: 20px; margin-bottom: 10px; font-size: 2em; font-weight: bold;">')
-    html = html.replace('<h2>', '<h2 style="margin-top: 18px; margin-bottom: 8px; font-size: 1.5em; font-weight: bold;">')
-    html = html.replace('<h3>', '<h3 style="margin-top: 16px; margin-bottom: 6px; font-size: 1.25em; font-weight: bold;">')
-    html = html.replace('<h4>', '<h4 style="margin-top: 14px; margin-bottom: 4px; font-size: 1.1em; font-weight: bold;">')
-
-    # Add styling to horizontal rules
-    html = html.replace('<hr />', '<hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;" />')
-    html = html.replace('<hr>', '<hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">')
-
-    # Add styling to lists
-    html = html.replace('<ul>', '<ul style="margin: 10px 0; padding-left: 20px;">')
-    html = html.replace('<ol>', '<ol style="margin: 10px 0; padding-left: 20px;">')
-    html = html.replace('<li>', '<li style="margin: 4px 0;">')
-
-    # Add target="_blank" to all links
-    html = re.sub(r'<a href="([^"]*)">', r'<a href="\1" target="_blank" rel="noopener noreferrer">', html)
-
-    # Restore LaTeX equations with proper delimiters for MathJax/KaTeX
-    for i, (latex_type, latex_content) in enumerate(latex_blocks):
-        if latex_type == 'display':
-            # Use display math delimiters that MathJax/KaTeX will recognize
-            placeholder = f"<!--LATEX_DISPLAY_{i}-->"
-            latex_html = f'<div class="math-display" style="margin: 15px 0; text-align: center; overflow-x: auto;">\\[{latex_content}\\]</div>'
-            html = html.replace(placeholder, latex_html)
-        else:  # inline
-            # Use inline math delimiters
-            placeholder = f"<!--LATEX_INLINE_{i}-->"
-            latex_html = f'<span class="math-inline">\\({latex_content}\\)</span>'
-            html = html.replace(placeholder, latex_html)
-
-    return html
 
 
 
@@ -585,6 +506,13 @@ def api_list_messages(chat_id):
     for m in rows:
         uname = (m.get('user_username') or m.get('username') or m.get('sender_username') or '').lower()
         m['is_self'] = (uname == current_username)
+
+        # Hydrate AI message metadata (sender_name and profile_color)
+        if m.get('sender_username') == 'AI' and not m.get('sender_name'):
+            # Check if sender_name contains response time, otherwise use default
+            m['sender_name'] = f'AI - {CHAT_MODEL_DISPLAY_NAME}'
+            m['sender_profile_color'] = '#3b82f6'  # Blue color for AI
+
     return jsonify({'messages': rows})
 
 
@@ -651,10 +579,14 @@ def api_send_message(chat_id):
                 agent = get_chat_agent(messages=filtered_history)
                 response = agent.send_message(ai_query)
                 ai_response = agent.get_last_assistant_message()
-                
+
+                # Extract response time from the response (in seconds)
+                response_time_ns = response.get('total_duration', 0) if response else 0
+                response_time_s = response_time_ns / 1_000_000_000  # Convert nanoseconds to seconds
+
                 if ai_response:
                     # Format the AI response (convert markdown to HTML)
-                    formatted_response = format_ai_response(ai_response)
+                    formatted_response = ResponseFormatter.format(ai_response)
 
                     # Insert AI response as a message from "AI" user
                     with get_db_connection() as conn:
@@ -665,7 +597,7 @@ def api_send_message(chat_id):
                         ai_row = cur2.fetchone()
                     
                     ai_msg = dict(ai_row)
-                    ai_msg['sender_name'] = f'AI - {CHAT_MODEL_DISPLAY_NAME}'
+                    ai_msg['sender_name'] = f'AI - {CHAT_MODEL_DISPLAY_NAME} ({response_time_s:.1f}s)'
                     ai_msg['sender_profile_color'] = '#3b82f6'  # Blue color for AI
                     ai_msg['is_self'] = False
                     

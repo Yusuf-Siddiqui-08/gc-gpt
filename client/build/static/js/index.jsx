@@ -522,7 +522,7 @@ function Chat({ chatId, user, go }) {
             padding: '12px 16px',
             borderRadius: 18,
             background: msg.is_self ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
-            color: msg.is_self ? '#fff' : 'var(--text)',
+            color: msg.is_self ? '#fff' : undefined,
             wordWrap: 'break-word'
           },
           dangerouslySetInnerHTML: { __html: msg.content }
