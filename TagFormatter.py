@@ -5,8 +5,6 @@ class TagFormatter(Formatter):
     """Custom Pygments formatter that outputs HTML with inline color styling."""
 
     def format(self, tokensource, outfile):
-        from pygments.token import Token, string_to_tokentype, STANDARD_TYPES
-
         for ttype, value in tokensource:
             color = None
 

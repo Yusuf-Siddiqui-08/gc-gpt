@@ -30,19 +30,6 @@ class ChatAgent:
         self._append_message(ROLE_ASSISTANT, assistant_content)
         return response
 
-    def get_messages(self) -> List[Dict[str, str]]:
-        return self.messages
-
-    def get_last_message(self) -> Optional[Dict[str, str]]:
-        return self.messages[-1] if self.messages else None
-
-    def get_last_user_message(self) -> Optional[str]:
-        # Walk backwards to find the last user message safely
-        for msg in reversed(self.messages):
-            if msg.get("role") == ROLE_USER:
-                return msg.get("content")
-        return None
-
     def get_last_assistant_message(self) -> Optional[str]:
         for msg in reversed(self.messages):
             if msg.get("role") == ROLE_ASSISTANT:
