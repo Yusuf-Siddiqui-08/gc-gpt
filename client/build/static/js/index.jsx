@@ -1,5 +1,5 @@
 // React and ReactDOM are loaded via CDN in index.html
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useMemo } = React;
 
 // Derived avatar style used for user initials
 const avatarStyle = {
@@ -377,6 +377,264 @@ function MyConversations({ user }) {
   return React.createElement(Conversations, { user });
 }
 
+function MessageItem({ msg, prevSenderId, onEdit, onDelete }) {
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isHovering, setIsHovering] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef(null);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setShowMenu(false);
+      }
+    }
+    if (showMenu) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [showMenu]);
+
+  const handleEditClick = () => {
+    setShowMenu(false);
+    // Extract text content from HTML for editing
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = msg.content;
+    let textContent = tempDiv.textContent || tempDiv.innerText || '';
+
+    // Remove /AI prefix if present (so user edits the actual message content)
+    if (textContent.startsWith('/AI ')) {
+      textContent = textContent.substring(4); // Remove '/AI '
+    }
+
+    setEditContent(textContent);
+    setIsEditing(true);
+  };
+
+  const handleDeleteClick = () => {
+    setShowMenu(false);
+    onDelete(msg.id);
+  };
+
+  const handleSaveEdit = async () => {
+    if (editContent.trim() && !isSaving) {
+      setIsSaving(true);
+      try {
+        await onEdit(msg.id, editContent.trim());
+        setIsEditing(false);
+      } finally {
+        setIsSaving(false);
+      }
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditContent('');
+  };
+
+  return React.createElement('div', {
+    className: 'message-bubble',
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: msg.is_self ? 'flex-end' : 'flex-start',
+      gap: 4,
+      width: '100%'
+    },
+    onMouseEnter: () => setIsHovering(true),
+    onMouseLeave: () => setIsHovering(false)
+  },
+    React.createElement('div', {
+      style: { fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 8, alignItems: 'center' }
+    },
+      msg.sender_name || msg.user_username,
+      msg.edited_at && React.createElement('span', {
+        onClick: () => setShowOriginal(!showOriginal),
+        style: {
+          fontWeight: 'bold',
+          cursor: 'pointer',
+          color: '#3b82f6',
+          userSelect: 'none'
+        },
+        title: showOriginal ? 'Hide original message' : 'Show original message'
+      }, 'Edited')
+    ),
+    showOriginal && msg.original_content && React.createElement('div', {
+      style: {
+        maxWidth: '70%',
+        padding: '12px 16px',
+        borderRadius: 18,
+        background: 'rgba(128,128,128,0.3)',
+        color: '#999',
+        wordWrap: 'break-word',
+        fontStyle: 'italic',
+        marginBottom: 4,
+        border: '1px dashed rgba(255,255,255,0.2)'
+      },
+      dangerouslySetInnerHTML: { __html: msg.original_content }
+    }),
+    isEditing ? React.createElement('div', {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        width: '100%',
+        maxWidth: '70%'
+      }
+    },
+      React.createElement('textarea', {
+        value: editContent,
+        onChange: (e) => setEditContent(e.target.value),
+        style: {
+          padding: '12px 16px',
+          borderRadius: 12,
+          border: '1px solid rgba(255,255,255,0.12)',
+          background: 'rgba(255,255,255,0.08)',
+          color: 'var(--text)',
+          outline: 'none',
+          minHeight: '80px',
+          resize: 'vertical',
+          fontFamily: 'inherit'
+        }
+      }),
+      React.createElement('div', { style: { display: 'flex', gap: 8 } },
+        React.createElement('button', {
+          className: 'btn primary',
+          onClick: handleSaveEdit,
+          disabled: isSaving,
+          style: { fontSize: 12, padding: '6px 12px' }
+        }, isSaving ? 'Thinking...' : 'Save'),
+        !isSaving && React.createElement('button', {
+          className: 'btn outline',
+          onClick: handleCancelEdit,
+          style: { fontSize: 12, padding: '6px 12px' }
+        }, 'Cancel')
+      )
+    ) : React.createElement('div', {
+      style: {
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 8,
+        maxWidth: '70%',
+        position: 'relative'
+      }
+    },
+      // 3-dot menu button (shown on hover for user's own messages)
+      msg.is_self && isHovering && React.createElement('div', {
+        ref: menuRef,
+        style: {
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center'
+        }
+      },
+        React.createElement('button', {
+          onClick: (e) => {
+            e.stopPropagation();
+            setShowMenu(!showMenu);
+          },
+          style: {
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: 16,
+            padding: 4,
+            color: 'var(--muted)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 24,
+            height: 24
+          },
+          title: 'Message options'
+        }, '⋮'),
+        // Dropdown menu
+        showMenu && React.createElement('div', {
+          style: {
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            background: 'rgba(20,20,25,0.98)',
+            border: '1px solid rgba(255,255,255,0.15)',
+            borderRadius: 12,
+            padding: '6px',
+            minWidth: 150,
+            zIndex: 1000,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3)',
+            marginTop: 6,
+            backdropFilter: 'blur(10px)'
+          }
+        },
+          React.createElement('button', {
+            onClick: handleEditClick,
+            style: {
+              width: '100%',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '10px 12px',
+              color: 'var(--text)',
+              textAlign: 'left',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              fontSize: 14,
+              borderRadius: 8,
+              transition: 'background 0.15s ease'
+            },
+            onMouseEnter: (e) => e.target.style.background = 'rgba(255,255,255,0.12)',
+            onMouseLeave: (e) => e.target.style.background = 'transparent',
+            title: 'Edit message'
+          }, '✏️', ' Edit'),
+          React.createElement('button', {
+            onClick: handleDeleteClick,
+            style: {
+              width: '100%',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '10px 12px',
+              color: '#ef4444',
+              textAlign: 'left',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              fontSize: 14,
+              borderRadius: 8,
+              transition: 'background 0.15s ease'
+            },
+            onMouseEnter: (e) => {
+              e.target.style.background = 'rgba(239,68,68,0.15)';
+              e.target.style.color = '#fca5a5';
+            },
+            onMouseLeave: (e) => {
+              e.target.style.background = 'transparent';
+              e.target.style.color = '#ef4444';
+            },
+            title: 'Delete message'
+          }, '🗑️', ' Delete')
+        )
+      ),
+      React.createElement('div', {
+        style: {
+          flex: 1,
+          padding: '12px 16px',
+          borderRadius: 18,
+          background: msg.is_self ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
+          color: msg.is_self ? '#fff' : undefined,
+          wordWrap: 'break-word'
+        },
+        dangerouslySetInnerHTML: { __html: msg.content }
+      })
+    )
+  );
+}
+
 function Chat({ chatId, user, go }) {
   const [chat, setChat] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -385,6 +643,15 @@ function Chat({ chatId, user, go }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+
+  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const lastMessageCountRef = useRef(0);
+  const lastTypesetIdRef = useRef(0);
+  const isInitialLoadRef = useRef(true);
+  const previousScrollHeightRef = useRef(0);
 
   useEffect(() => {
     if (!user) {
@@ -394,23 +661,83 @@ function Chat({ chatId, user, go }) {
     loadChat();
   }, [chatId, user]);
 
-  // Trigger MathJax typesetting when messages change
+  // Optimized MathJax typesetting - only process new messages
   useEffect(() => {
-    if (window.MathJax && window.MathJax.typesetPromise) {
-      window.MathJax.typesetPromise().catch((err) => console.error('MathJax typeset error:', err));
+    if (!window.MathJax || !window.MathJax.typesetPromise) return;
+
+    const newMessageCount = messages.length;
+    if (newMessageCount <= lastMessageCountRef.current) return;
+
+    // Only typeset new messages
+    const newMessagesStartIndex = lastMessageCountRef.current;
+    lastMessageCountRef.current = newMessageCount;
+
+    // Use requestIdleCallback for better performance
+    const typesetNewMessages = () => {
+      const container = messagesContainerRef.current;
+      if (!container) return;
+
+      // Find only the new message elements
+      const allMessageElements = container.querySelectorAll('.message-bubble');
+      const newElements = Array.from(allMessageElements).slice(newMessagesStartIndex);
+
+      if (newElements.length > 0) {
+        window.MathJax.typesetPromise(newElements).catch((err) => {
+          console.error('MathJax typeset error:', err);
+        });
+      }
+    };
+
+    if (window.requestIdleCallback) {
+      window.requestIdleCallback(typesetNewMessages, { timeout: 500 });
+    } else {
+      setTimeout(typesetNewMessages, 0);
     }
-  }, [messages]);
+  }, [messages.length]);
+
+  // Auto-scroll to bottom on initial load or when new messages arrive
+  useEffect(() => {
+    if (messagesEndRef.current && messages.length > 0) {
+      // On initial load, scroll immediately to bottom
+      if (isInitialLoadRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'auto' });
+        isInitialLoadRef.current = false;
+      } else {
+        // For new messages, smooth scroll
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+  }, [messages.length]);
+
+  // Infinite scroll: load older messages when scrolling to top
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      // Check if user scrolled near the top (within 100px)
+      if (container.scrollTop < 100 && hasMoreMessages && !loadingOlder && messages.length > 0) {
+        loadOlderMessages();
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [messages, hasMoreMessages, loadingOlder]);
 
   async function loadChat() {
     try {
       setLoading(true);
+      isInitialLoadRef.current = true;
       const [chatRes, messagesRes] = await Promise.all([
         api('GET', `/api/chats/${chatId}`),
-        api('GET', `/api/chats/${chatId}/messages`)
+        api('GET', `/api/chats/${chatId}/messages?max_chars=50000`)
       ]);
       setChat(chatRes.chat);
       setMessages(messagesRes.messages || []);
+      setHasMoreMessages(messagesRes.has_more !== false);
       setError('');
+      lastMessageCountRef.current = 0; // Reset counter for initial load
     } catch (err) {
       if (err.status === 403) {
         setError('You are not a member of this chat.');
@@ -421,6 +748,40 @@ function Chat({ chatId, user, go }) {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadOlderMessages() {
+    if (loadingOlder || !hasMoreMessages || messages.length === 0) return;
+
+    setLoadingOlder(true);
+    const container = messagesContainerRef.current;
+    const oldScrollHeight = container?.scrollHeight || 0;
+    previousScrollHeightRef.current = oldScrollHeight;
+
+    try {
+      const oldestMessageId = messages[0].id;
+      const res = await api('GET', `/api/chats/${chatId}/messages?before_id=${oldestMessageId}&max_chars=30000`);
+      const olderMessages = res.messages || [];
+
+      if (olderMessages.length === 0 || res.has_more === false) {
+        setHasMoreMessages(false);
+      } else {
+        setMessages(prev => [...olderMessages, ...prev]);
+
+        // Maintain scroll position after loading older messages
+        setTimeout(() => {
+          if (container) {
+            const newScrollHeight = container.scrollHeight;
+            const scrollDiff = newScrollHeight - oldScrollHeight;
+            container.scrollTop = scrollDiff;
+          }
+        }, 0);
+      }
+    } catch (err) {
+      console.error('Failed to load older messages:', err);
+    } finally {
+      setLoadingOlder(false);
     }
   }
 
@@ -454,6 +815,161 @@ function Chat({ chatId, user, go }) {
     }
   }
 
+  async function handleEditMessage(messageId, newContent) {
+    try {
+      // Find the message being edited
+      const msgIndex = messages.findIndex(m => m.id === messageId);
+      if (msgIndex === -1) return;
+
+      const originalMessage = messages[msgIndex];
+      const wasAiPrompt = originalMessage.content.includes('/AI');
+
+      // Check if the next message is an AI response to this message
+      const nextMessage = msgIndex < messages.length - 1 ? messages[msgIndex + 1] : null;
+      const isNextAiResponse = nextMessage && nextMessage.sender_username === 'AI' && nextMessage.reply_to === messageId;
+
+      // If this was an AI prompt and we're editing it, delete the AI response and resend
+      if (wasAiPrompt && isNextAiResponse) {
+        if (!confirm('Editing this message will delete the AI response and send a new prompt. Continue?')) {
+          return;
+        }
+        // Delete the AI response
+        await api('DELETE', `/api/chats/${chatId}/messages/${nextMessage.id}`);
+        // Remove AI message from state
+        setMessages(prev => prev.filter(m => m.id !== nextMessage.id));
+      }
+
+      // Update the message - keep /AI prefix if it was an AI prompt
+      const contentToSave = wasAiPrompt ? `/AI ${newContent}` : newContent;
+      const res = await api('PUT', `/api/chats/${chatId}/messages/${messageId}`, {
+        content: contentToSave
+      });
+
+      // Update the message in state
+      setMessages(prev => prev.map(m => m.id === messageId ? { ...res.message, is_self: m.is_self } : m));
+
+      // If it was an AI prompt, generate new AI response
+      if (wasAiPrompt) {
+        setSending(true);
+        try {
+          // Send the /AI prompt to get the AI response
+          // This will create a duplicate user message, so we'll need to delete it
+          const aiRes = await api('POST', `/api/chats/${chatId}/messages`, {
+            content: `/AI ${newContent}`
+          });
+
+          const duplicateMessageId = aiRes.message?.id;
+          const aiMessageId = aiRes.ai_message?.id;
+
+          // Delete the duplicate user message that was just created
+          if (duplicateMessageId) {
+            try {
+              await api('DELETE', `/api/chats/${chatId}/messages/${duplicateMessageId}`);
+            } catch (deleteErr) {
+              console.error('Failed to delete duplicate message:', deleteErr);
+            }
+          }
+
+          // Update the AI response's reply_to to point to the original edited message
+          if (aiMessageId) {
+            try {
+              await api('PATCH', `/api/chats/${chatId}/messages/${aiMessageId}/reply_to`, {
+                reply_to: messageId
+              });
+              // Update the AI message in our local state to reflect the correct reply_to
+              if (aiRes.ai_message) {
+                aiRes.ai_message.reply_to = messageId;
+              }
+            } catch (patchErr) {
+              console.error('Failed to update AI message reply_to:', patchErr);
+            }
+          }
+
+          // Only add the AI response
+          if (aiRes.ai_message) {
+            setMessages(prev => [...prev, aiRes.ai_message]);
+          }
+        } catch (err) {
+          console.error('Failed to get new AI response:', err);
+        } finally {
+          setSending(false);
+        }
+      }
+    } catch (err) {
+      alert('Failed to edit message: ' + (err.data?.error || err.message));
+    }
+  }
+
+  async function handleDeleteMessage(messageId) {
+    try {
+      // Find the message being deleted
+      const msgIndex = messages.findIndex(m => m.id === messageId);
+      if (msgIndex === -1) return;
+
+      const messageToDelete = messages[msgIndex];
+
+      // Check if the next message is an AI response to this message
+      const nextMessage = msgIndex < messages.length - 1 ? messages[msgIndex + 1] : null;
+      const isNextAiResponse = nextMessage && nextMessage.sender_username === 'AI' && nextMessage.reply_to === messageId;
+
+      // Ask for confirmation
+      let shouldDeleteAi = false;
+      if (isNextAiResponse) {
+        const confirmMsg = 'This message has an AI response. Delete both the message and AI response?';
+        if (!confirm(confirmMsg)) return;
+        shouldDeleteAi = true;
+      } else {
+        if (!confirm('Are you sure you want to delete this message?')) return;
+      }
+
+      // If there's an AI response, delete it FIRST (before deleting the parent message)
+      // This way the backend can still verify that the AI message is replying to the user's message
+      if (shouldDeleteAi && nextMessage) {
+        try {
+          await api('DELETE', `/api/chats/${chatId}/messages/${nextMessage.id}`);
+          setMessages(prev => prev.filter(m => m.id !== nextMessage.id));
+        } catch (err) {
+          console.error('Failed to delete AI response:', err);
+          alert('Failed to delete AI response: ' + (err.data?.error || err.message));
+          return; // Don't proceed to delete the user message if AI deletion failed
+        }
+      }
+
+      // Now delete the user's message
+      await api('DELETE', `/api/chats/${chatId}/messages/${messageId}`);
+      setMessages(prev => prev.filter(m => m.id !== messageId));
+
+    } catch (err) {
+      alert('Failed to delete message: ' + (err.data?.error || err.message));
+    }
+  }
+
+  // Memoize message list rendering
+  const messageElements = useMemo(() => {
+    if (messages.length === 0) {
+      return React.createElement('div', {
+        style: {
+          textAlign: 'center',
+          color: 'var(--muted)',
+          marginTop: 40
+        }
+      }, 'No messages yet. Start the conversation!');
+    }
+
+    return messages.map((msg, index) => {
+      const prevMsg = index > 0 ? messages[index - 1] : null;
+      const prevSenderId = prevMsg ? (prevMsg.user_username || prevMsg.sender_username) : null;
+
+      return React.createElement(MessageItem, {
+        key: msg.id,
+        msg: msg,
+        prevSenderId: prevSenderId,
+        onEdit: handleEditMessage,
+        onDelete: handleDeleteMessage
+      });
+    });
+  }, [messages]);
+
   if (loading) {
     return React.createElement('div', { className: 'gcapp-panel' }, 'Loading chat...');
   }
@@ -468,7 +984,7 @@ function Chat({ chatId, user, go }) {
     );
   }
 
-  return React.createElement('div', { style: { height: '100%', display: 'flex', flexDirection: 'column' } },
+  return React.createElement('div', { style: { height: '100%', display: 'flex', flexDirection: 'column', paddingBottom: '20px' } },
     React.createElement('div', {
       style: {
         padding: '16px 24px',
@@ -488,56 +1004,40 @@ function Chat({ chatId, user, go }) {
       )
     ),
     React.createElement('div', {
+      ref: messagesContainerRef,
       style: {
         flex: 1,
         padding: '20px',
         overflowY: 'auto',
         display: 'flex',
         flexDirection: 'column',
-        gap: 16
+        gap: 0,
+        position: 'relative'
       }
     },
-      messages.length === 0 ? React.createElement('div', {
+      loadingOlder && React.createElement('div', {
         style: {
           textAlign: 'center',
+          padding: '10px',
           color: 'var(--muted)',
-          marginTop: 40
+          fontSize: '14px'
         }
-      }, 'No messages yet. Start the conversation!') :
-      messages.map(msg => React.createElement('div', {
-        key: msg.id,
-        style: {
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: msg.is_self ? 'flex-end' : 'flex-start',
-          gap: 4
-        }
-      },
-        React.createElement('div', {
-          style: { fontSize: 12, color: 'var(--muted)' }
-        }, msg.sender_name || msg.user_username),
-        React.createElement('div', {
-          style: {
-            maxWidth: '70%',
-            padding: '12px 16px',
-            borderRadius: 18,
-            background: msg.is_self ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
-            color: msg.is_self ? '#fff' : undefined,
-            wordWrap: 'break-word'
-          },
-          dangerouslySetInnerHTML: { __html: msg.content }
-        })
-      ))
+      }, 'Loading older messages...'),
+      messageElements,
+      React.createElement('div', { ref: messagesEndRef })
     ),
     React.createElement('form', {
       onSubmit: sendMessage,
       style: {
-        padding: '20px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(255,255,255,0.05)',
+        padding: '16px 20px',
+        marginTop: '20px',
+        borderRadius: '16px',
+        border: '1px solid rgba(255,255,255,0.12)',
+        background: 'rgba(255,255,255,0.08)',
         display: 'flex',
         gap: 12,
-        alignItems: 'center'
+        alignItems: 'center',
+        flexShrink: 0
       }
     },
       // AI Toggle Button
@@ -562,7 +1062,6 @@ function Chat({ chatId, user, go }) {
           flexShrink: 0
         }
       },
-        // Robot head with headset icon (using Unicode characters)
         React.createElement('span', {
           style: {
             display: 'flex',

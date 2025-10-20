@@ -94,7 +94,9 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_username TEXT NOT NULL,
     content TEXT NOT NULL,
     reply_to INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    edited_at TIMESTAMP,
+    original_content TEXT
 );
 
 -- name: create_index_messages_chat
@@ -105,7 +107,7 @@ INSERT INTO messages (chat_id, sender_username, content, reply_to)
 VALUES (?, ?, ?, ?);
 
 -- name: list_messages_for_chat
-SELECT m.id, m.chat_id, m.sender_username, m.content, m.reply_to, m.created_at,
+SELECT m.id, m.chat_id, m.sender_username, m.content, m.reply_to, m.created_at, m.edited_at, m.original_content,
        u.name AS sender_name, COALESCE(u.profile_color, '') AS sender_profile_color
 FROM messages m
 LEFT JOIN users u ON u.username = m.sender_username
@@ -117,3 +119,20 @@ LIMIT ?;
 SELECT id, chat_id, sender_username, content, reply_to, created_at
 FROM messages
 WHERE id = ?;
+
+-- name: list_messages_by_content_length
+SELECT m.id, m.chat_id, m.sender_username, m.content, m.reply_to, m.created_at, m.edited_at, m.original_content,
+       u.name AS sender_name, COALESCE(u.profile_color, '') AS sender_profile_color,
+       LENGTH(m.content) AS content_length
+FROM messages m
+LEFT JOIN users u ON u.username = m.sender_username
+WHERE m.chat_id = ? AND (m.id < ? OR ? IS NULL)
+ORDER BY m.id DESC;
+
+-- name: update_message
+UPDATE messages
+SET content = ?, edited_at = CURRENT_TIMESTAMP, original_content = COALESCE(original_content, (SELECT content FROM messages WHERE id = ?))
+WHERE id = ?;
+
+-- name: delete_message
+DELETE FROM messages WHERE id = ?;

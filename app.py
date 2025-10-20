@@ -122,6 +122,18 @@ def init_db():
         except Exception:
             pass
 
+        # Ensure columns exist on messages (lightweight auto-migration)
+        try:
+            cur_msg = conn.execute("PRAGMA table_info(messages)")
+            msg_cols = [row[1] for row in cur_msg.fetchall()]
+            if 'edited_at' not in msg_cols:
+                conn.execute("ALTER TABLE messages ADD COLUMN edited_at TIMESTAMP")
+            if 'original_content' not in msg_cols:
+                conn.execute("ALTER TABLE messages ADD COLUMN original_content TEXT")
+            conn.commit()
+        except Exception:
+            pass
+
         # Ensure columns exist on users (lightweight auto-migration)
         cur = conn.execute(load_sql('pragma_table_info_users'))
         cols = [row[1] for row in cur.fetchall()]
@@ -258,9 +270,9 @@ def api_login():
     if not user or not check_password_hash(user['password_hash'], password):
         return jsonify({'error': 'Invalid username or password.'}), 401
 
-    color = user.get('profile_color')
-    if not color:
-        color = random_profile_color()
+        color = user.get('profile_color')
+        if not color:
+            color = random_profile_color()
         try:
             update_user_profile_color(user['id'], color)
         except Exception:
@@ -492,28 +504,61 @@ def api_list_messages(chat_id):
         has_updates = latest_id is not None and latest_id > since_id
         return jsonify({'has_updates': has_updates, 'latest_id': latest_id})
 
-    # pagination: before_id for backwards pagination (older messages)
+    # Content-based pagination: load messages until reaching target content length
     before_id = request.args.get('before_id', type=int)
-    limit = request.args.get('limit', default=50, type=int)
-    limit = max(1, min(200, limit))
+    # Target content length: ~50KB for initial load, ~30KB for subsequent loads
+    target_chars = request.args.get('max_chars', default=50000 if before_id is None else 30000, type=int)
+    # Cap at reasonable limits
+    target_chars = max(10000, min(100000, target_chars))
+
     with get_db_connection() as conn:
-        cur = conn.execute(load_sql('list_messages_for_chat'), (chat_id, before_id, before_id, limit))
-        rows = [dict(r) for r in cur.fetchall()]
+        cur = conn.execute(load_sql('list_messages_by_content_length'), (chat_id, before_id, before_id))
+        all_rows = cur.fetchall()
+
+        # Accumulate messages until we reach target content length
+        selected_rows = []
+        cumulative_length = 0
+        min_messages = 5  # Always load at least 5 messages (unless fewer exist)
+        max_messages = 100  # Never load more than 100 messages at once
+
+        for row in all_rows:
+            row_dict = dict(row)
+            content_len = row_dict.get('content_length', 0)
+
+            # Always include the first min_messages
+            if len(selected_rows) < min_messages:
+                selected_rows.append(row_dict)
+                cumulative_length += content_len
+            # After min_messages, check if we've reached the target
+            elif cumulative_length < target_chars and len(selected_rows) < max_messages:
+                selected_rows.append(row_dict)
+                cumulative_length += content_len
+            else:
+                # We've reached our target
+                break
+
     # Reverse to chronological ascending for rendering
-    rows.reverse()
+    selected_rows.reverse()
+
     # Annotate which messages belong to the current user to help UI alignment
     current_username = (user_session.get('username') or '').lower()
-    for m in rows:
+    for m in selected_rows:
         uname = (m.get('user_username') or m.get('username') or m.get('sender_username') or '').lower()
         m['is_self'] = (uname == current_username)
 
         # Hydrate AI message metadata (sender_name and profile_color)
         if m.get('sender_username') == 'AI' and not m.get('sender_name'):
-            # Check if sender_name contains response time, otherwise use default
             m['sender_name'] = f'AI - {CHAT_MODEL_DISPLAY_NAME}'
             m['sender_profile_color'] = '#3b82f6'  # Blue color for AI
 
-    return jsonify({'messages': rows})
+        # Remove content_length from response (internal use only)
+        m.pop('content_length', None)
+
+    return jsonify({
+        'messages': selected_rows,
+        'has_more': len(all_rows) > len(selected_rows),
+        'total_chars_loaded': cumulative_length
+    })
 
 
 @app.route('/api/chats/<chat_id>/messages', methods=['POST'])
@@ -609,6 +654,121 @@ def api_send_message(chat_id):
                 pass
     
     return jsonify({'message': msg}), 201
+
+
+@app.route('/api/chats/<chat_id>/messages/<int:message_id>', methods=['PUT'])
+def api_edit_message(chat_id, message_id):
+    user_session = session.get('user')
+    if not user_session:
+        return jsonify({'error': 'Not authenticated.'}), 401
+    username = user_session.get('username')
+    if not _is_member(chat_id, username):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    data = request.get_json(silent=True) or {}
+    content = (data.get('content') or '').strip()
+    if not content:
+        return jsonify({'error': 'Message content is required.'}), 400
+
+    with get_db_connection() as conn:
+        # Check if message exists and user owns it
+        cur = conn.execute("SELECT sender_username, content FROM messages WHERE id = ? AND chat_id = ?", (message_id, chat_id))
+        msg = cur.fetchone()
+        if not msg:
+            return jsonify({'error': 'Message not found.'}), 404
+
+        msg_sender = msg[0]
+
+        if msg_sender.lower() != username.lower():
+            return jsonify({'error': 'You can only edit your own messages.'}), 403
+
+        # Update the message
+        conn.execute(load_sql('update_message'), (content, message_id, message_id))
+        conn.commit()
+
+        # Get updated message
+        cur2 = conn.execute("SELECT id, chat_id, sender_username, content, reply_to, created_at, edited_at, original_content FROM messages WHERE id = ?", (message_id,))
+        row = cur2.fetchone()
+
+    updated_msg = dict(row)
+    sender = get_user_by_username(username)
+    updated_msg['sender_name'] = sender.get('name') if sender else username
+    updated_msg['sender_profile_color'] = sender.get('profile_color') if sender else random_profile_color()
+    updated_msg['is_self'] = True
+
+    return jsonify({'message': updated_msg}), 200
+
+
+@app.route('/api/chats/<chat_id>/messages/<int:message_id>', methods=['DELETE'])
+def api_delete_message(chat_id, message_id):
+    user_session = session.get('user')
+    if not user_session:
+        return jsonify({'error': 'Not authenticated.'}), 401
+    username = user_session.get('username')
+    if not _is_member(chat_id, username):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    with get_db_connection() as conn:
+        # Check if message exists
+        cur = conn.execute("SELECT sender_username, reply_to FROM messages WHERE id = ? AND chat_id = ?", (message_id, chat_id))
+        msg = cur.fetchone()
+        if not msg:
+            return jsonify({'error': 'Message not found.'}), 404
+
+        msg_sender = msg[0]
+        reply_to_id = msg[1]
+
+        # Allow deletion if:
+        # 1. User owns the message, OR
+        # 2. It's an AI message replying to the user's message
+        is_owner = msg_sender.lower() == username.lower()
+        is_ai_reply_to_user = False
+
+        if msg_sender == 'AI' and reply_to_id:
+            # Check if this AI message is replying to the user's message
+            cur2 = conn.execute("SELECT sender_username FROM messages WHERE id = ?", (reply_to_id,))
+            parent_msg = cur2.fetchone()
+            if parent_msg and parent_msg[0].lower() == username.lower():
+                is_ai_reply_to_user = True
+
+        if not is_owner and not is_ai_reply_to_user:
+            return jsonify({'error': 'You can only delete your own messages or AI responses to your messages.'}), 403
+
+        # Delete the message
+        conn.execute(load_sql('delete_message'), (message_id,))
+        conn.commit()
+
+    return ('', 204)
+
+
+@app.route('/api/chats/<chat_id>/messages/<int:message_id>/reply_to', methods=['PATCH'])
+def api_update_reply_to(chat_id, message_id):
+    user_session = session.get('user')
+    if not user_session:
+        return jsonify({'error': 'Not authenticated.'}), 401
+    username = user_session.get('username')
+    if not _is_member(chat_id, username):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    data = request.get_json(silent=True) or {}
+    new_reply_to = data.get('reply_to')
+
+    with get_db_connection() as conn:
+        # Check if message exists
+        cur = conn.execute("SELECT sender_username, reply_to FROM messages WHERE id = ? AND chat_id = ?", (message_id, chat_id))
+        msg = cur.fetchone()
+        if not msg:
+            return jsonify({'error': 'Message not found.'}), 404
+
+        # Allow updating reply_to if it's an AI message
+        if msg[0] != 'AI':
+            return jsonify({'error': 'Can only update reply_to for AI messages.'}), 403
+
+        # Update reply_to
+        conn.execute("UPDATE messages SET reply_to = ? WHERE id = ?", (new_reply_to, message_id))
+        conn.commit()
+
+    return jsonify({'success': True}), 200
 
 
 @app.route('/api/chats', methods=['POST'])
