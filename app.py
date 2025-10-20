@@ -270,13 +270,14 @@ def api_login():
     if not user or not check_password_hash(user['password_hash'], password):
         return jsonify({'error': 'Invalid username or password.'}), 401
 
-        color = user.get('profile_color')
-        if not color:
-            color = random_profile_color()
+    color = user.get('profile_color')
+    if not color:
+        color = random_profile_color()
         try:
             update_user_profile_color(user['id'], color)
         except Exception:
             pass
+
     session['user'] = {
         'name': user['name'],
         'username': user['username'],
@@ -910,11 +911,10 @@ if __name__ == '__main__':
     # Railway and other cloud platforms require binding to 0.0.0.0 and using PORT env var
     host = os.environ.get('FLASK_RUN_HOST', '0.0.0.0')
     port = int(os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', '8080')))
-    debug = os.environ.get('FLASK_DEBUG', '0') == '1'
 
     # Optionally clear DBs only when running as the main program (avoid clearing on import/reloader)
     _clear_db_on_start_if_needed()
 
     print(f"Starting Flask server on http://{host}:{port}")
     print(f"Serving static files from: {BUILD_DIR}")
-    app.run(host=host, port=port, debug=debug)
+    app.run(host=host, port=port, debug=False)
