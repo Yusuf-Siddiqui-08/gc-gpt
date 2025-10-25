@@ -85,6 +85,25 @@ class ResponseFormatter:
         # Add target="_blank" to all links
         html = re.sub(r'<a href="([^"]*)">', r'<a href="\1" target="_blank" rel="noopener noreferrer">', html)
 
+        # Proxy external images to bypass CORS and referrer policies
+        def proxy_image(match):
+            img_tag = match.group(0)
+            # Extract src attribute
+            src_match = re.search(r'src="([^"]*)"', img_tag)
+            if src_match:
+                original_src = src_match.group(1)
+                # Use wsrv.nl image proxy (free, fast, and reliable)
+                proxied_src = f"https://wsrv.nl/?url={original_src}"
+                img_tag = img_tag.replace(f'src="{original_src}"', f'src="{proxied_src}"')
+            # Add styling and error handling
+            if 'style=' not in img_tag:
+                img_tag = img_tag.replace('<img ', '<img style="max-width: 100%; height: auto; display: block; margin: 10px 0;" ')
+            if 'onerror=' not in img_tag:
+                img_tag = img_tag.replace('<img ', '<img onerror="this.style.display=\'none\'" ')
+            return img_tag
+
+        html = re.sub(r'<img\s+[^>]*>', proxy_image, html)
+
         # Restore LaTeX equations with proper delimiters for MathJax/KaTeX
         for i, (latex_type, latex_content) in enumerate(latex_blocks):
             if latex_type == 'display':
