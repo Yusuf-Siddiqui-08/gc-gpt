@@ -165,9 +165,13 @@ def random_profile_color() -> str:
 
 
 def update_user_profile_color(user_id: int, color: str):
-    with get_db_connection() as conn:
-        conn.execute(load_sql('update_user_profile_color'), (color, user_id))
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(load_sql('update_user_profile_color'), (color, user_id))
         conn.commit()
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -254,10 +258,14 @@ def init_db():
 def get_user_by_username(username: str):
     if not username:
         return None
-    with get_db_connection() as conn:
-        cur = conn.execute(load_sql('get_user_by_username'), (username,))
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(load_sql('get_user_by_username'), (username,))
         row = cur.fetchone()
-        return dict(row) if row else None
+        return row_to_dict(row, cur) if row else None
+    finally:
+        conn.close()
 
 
 
@@ -412,10 +420,14 @@ def api_update_profile():
 
     # Check unique username if changed
     if new_username != db_user['username']:
-        with get_db_connection() as conn:
-            cur = conn.execute(load_sql('select_user_id_by_username'), (new_username,))
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(load_sql('select_user_id_by_username'), (new_username,))
             if cur.fetchone():
                 return jsonify({'error': 'An account with that username already exists.'}), 409
+        finally:
+            conn.close()
 
     # Perform update
     conn = get_db_connection()
@@ -463,30 +475,45 @@ def _generate_chat_id(conn) -> str:
     # Generate an 8-char hex id and ensure uniqueness
     while True:
         cid = secrets.token_hex(4)
-        cur = conn.execute("SELECT 1 FROM chats WHERE id = ?", (cid,))
+        cur = conn.cursor()
+        placeholder = "?" if not USE_POSTGRES else "%s"
+        cur.execute(f"SELECT 1 FROM chats WHERE id = {placeholder}", (cid,))
         if not cur.fetchone():
             return cid
 
 
 def _list_user_chats(username: str):
-    with get_db_connection() as conn:
-        cur = conn.execute(load_sql('list_user_chats'), (username,))
-        rows = [dict(row) for row in cur.fetchall()]
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(load_sql('list_user_chats'), (username,))
+        rows = [row_to_dict(row, cur) for row in cur.fetchall()]
         return rows
+    finally:
+        conn.close()
 
 
 def _get_chat_members(chat_id: str):
     """Return members for a chat ordered by most recently joined (as a proxy for activity)."""
-    with get_db_connection() as conn:
-        cur = conn.execute(load_sql('list_chat_members'), (chat_id,))
-        members = [dict(row) for row in cur.fetchall()]
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(load_sql('list_chat_members'), (chat_id,))
+        members = [row_to_dict(row, cur) for row in cur.fetchall()]
         return members
+    finally:
+        conn.close()
 
 
 def _is_member(chat_id: str, username: str) -> bool:
-    with get_db_connection() as conn:
-        cur = conn.execute("SELECT 1 FROM chat_members WHERE chat_id = ? AND user_username = ?", (chat_id, username))
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        placeholder = "?" if not USE_POSTGRES else "%s"
+        cur.execute(f"SELECT 1 FROM chat_members WHERE chat_id = {placeholder} AND user_username = {placeholder}", (chat_id, username))
         return cur.fetchone() is not None
+    finally:
+        conn.close()
 
 
 def _compute_avatar_layout(members):
@@ -574,14 +601,18 @@ def api_get_chat(chat_id):
     user_session = session.get('user')
     if not user_session:
         return jsonify({'error': 'Not authenticated.'}), 401
-    with get_db_connection() as conn:
-        cur = conn.execute(load_sql('get_chat_by_id'), (chat_id,))
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(load_sql('get_chat_by_id'), (chat_id,))
         row = cur.fetchone()
         if not row:
             return jsonify({'error': 'Chat not found.'}), 404
         if not _is_member(chat_id, user_session.get('username')):
             return jsonify({'error': 'Forbidden'}), 403
-        chat = dict(row)
+        chat = row_to_dict(row, cur)
+    finally:
+        conn.close()
     members = _get_chat_members(chat_id)
     return jsonify({'chat': {**chat, 'members': members}})
 
@@ -599,8 +630,15 @@ def api_list_messages(chat_id):
     since_id = request.args.get('since_id', type=int)
     check_only = request.args.get('check_only', default=0, type=int) == 1
     if check_only and since_id is not None:
-        with get_db_connection() as conn:
-            latest_id = conn.execute("SELECT MAX(id) FROM messages WHERE chat_id = ?", (chat_id,)).fetchone()[0]
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            placeholder = "?" if not USE_POSTGRES else "%s"
+            cur.execute(f"SELECT MAX(id) FROM messages WHERE chat_id = {placeholder}", (chat_id,))
+            result = cur.fetchone()
+            latest_id = result[0] if result else None
+        finally:
+            conn.close()
         has_updates = latest_id is not None and latest_id > since_id
         return jsonify({'has_updates': has_updates, 'latest_id': latest_id})
 
@@ -611,8 +649,10 @@ def api_list_messages(chat_id):
     # Cap at reasonable limits
     target_chars = max(10000, min(100000, target_chars))
 
-    with get_db_connection() as conn:
-        cur = conn.execute(load_sql('list_messages_by_content_length'), (chat_id, before_id, before_id))
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(load_sql('list_messages_by_content_length'), (chat_id, before_id, before_id))
         all_rows = cur.fetchall()
 
         # Accumulate messages until we reach target content length
@@ -622,7 +662,7 @@ def api_list_messages(chat_id):
         max_messages = 100  # Never load more than 100 messages at once
 
         for row in all_rows:
-            row_dict = dict(row)
+            row_dict = row_to_dict(row, cur)
             content_len = row_dict.get('content_length', 0)
 
             # Always include the first min_messages
@@ -636,6 +676,8 @@ def api_list_messages(chat_id):
             else:
                 # We've reached our target
                 break
+    finally:
+        conn.close()
 
     # Reverse to chronological ascending for rendering
     selected_rows.reverse()
@@ -708,9 +750,13 @@ def api_send_message(chat_id):
         if ai_query:
             try:
                 # Get chat history for context (excluding the current message we just inserted)
-                with get_db_connection() as conn:
-                    cur = conn.execute(load_sql('list_messages_for_chat'), (chat_id, msg_id, msg_id, 20))
-                    history_rows = [dict(r) for r in cur.fetchall()]
+                conn3 = get_db_connection()
+                try:
+                    cur = conn3.cursor()
+                    cur.execute(load_sql('list_messages_for_chat'), (chat_id, msg_id, msg_id, 20))
+                    history_rows = [row_to_dict(r, cur) for r in cur.fetchall()]
+                finally:
+                    conn3.close()
                 
                 # Build message history for ChatAgent
                 chat_history = []
@@ -788,27 +834,33 @@ def api_edit_message(chat_id, message_id):
     if not content:
         return jsonify({'error': 'Message content is required.'}), 400
 
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        placeholder = "?" if not USE_POSTGRES else "%s"
         # Check if message exists and user owns it
-        cur = conn.execute("SELECT sender_username, content FROM messages WHERE id = ? AND chat_id = ?", (message_id, chat_id))
+        cur.execute(f"SELECT sender_username, content FROM messages WHERE id = {placeholder} AND chat_id = {placeholder}", (message_id, chat_id))
         msg = cur.fetchone()
         if not msg:
             return jsonify({'error': 'Message not found.'}), 404
 
-        msg_sender = msg[0]
+        msg_sender = msg[0] if isinstance(msg, tuple) else msg['sender_username']
 
         if msg_sender.lower() != username.lower():
             return jsonify({'error': 'You can only edit your own messages.'}), 403
 
         # Update the message
-        conn.execute(load_sql('update_message'), (content, message_id, message_id))
+        cur.execute(load_sql('update_message'), (content, message_id, message_id))
         conn.commit()
 
         # Get updated message
-        cur2 = conn.execute("SELECT id, chat_id, sender_username, content, reply_to, created_at, edited_at, original_content FROM messages WHERE id = ?", (message_id,))
+        cur2 = conn.cursor()
+        cur2.execute(f"SELECT id, chat_id, sender_username, content, reply_to, created_at, edited_at, original_content FROM messages WHERE id = {placeholder}", (message_id,))
         row = cur2.fetchone()
+    finally:
+        conn.close()
 
-    updated_msg = dict(row)
+    updated_msg = row_to_dict(row, cur2)
     sender = get_user_by_username(username)
     updated_msg['sender_name'] = sender.get('name') if sender else username
     updated_msg['sender_profile_color'] = sender.get('profile_color') if sender else random_profile_color()
@@ -826,15 +878,18 @@ def api_delete_message(chat_id, message_id):
     if not _is_member(chat_id, username):
         return jsonify({'error': 'Forbidden'}), 403
 
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        placeholder = "?" if not USE_POSTGRES else "%s"
         # Check if message exists
-        cur = conn.execute("SELECT sender_username, reply_to FROM messages WHERE id = ? AND chat_id = ?", (message_id, chat_id))
+        cur.execute(f"SELECT sender_username, reply_to FROM messages WHERE id = {placeholder} AND chat_id = {placeholder}", (message_id, chat_id))
         msg = cur.fetchone()
         if not msg:
             return jsonify({'error': 'Message not found.'}), 404
 
-        msg_sender = msg[0]
-        reply_to_id = msg[1]
+        msg_sender = msg[0] if isinstance(msg, tuple) else msg['sender_username']
+        reply_to_id = msg[1] if isinstance(msg, tuple) else msg['reply_to']
 
         # Allow deletion if:
         # 1. User owns the message, OR
@@ -844,17 +899,21 @@ def api_delete_message(chat_id, message_id):
 
         if msg_sender == 'AI' and reply_to_id:
             # Check if this AI message is replying to the user's message
-            cur2 = conn.execute("SELECT sender_username FROM messages WHERE id = ?", (reply_to_id,))
+            cur2 = conn.cursor()
+            cur2.execute(f"SELECT sender_username FROM messages WHERE id = {placeholder}", (reply_to_id,))
             parent_msg = cur2.fetchone()
-            if parent_msg and parent_msg[0].lower() == username.lower():
+            parent_username = parent_msg[0] if isinstance(parent_msg, tuple) else parent_msg['sender_username'] if parent_msg else None
+            if parent_msg and parent_username.lower() == username.lower():
                 is_ai_reply_to_user = True
 
         if not is_owner and not is_ai_reply_to_user:
             return jsonify({'error': 'You can only delete your own messages or AI responses to your messages.'}), 403
 
         # Delete the message
-        conn.execute(load_sql('delete_message'), (message_id,))
+        cur.execute(load_sql('delete_message'), (message_id,))
         conn.commit()
+    finally:
+        conn.close()
 
     return ('', 204)
 
@@ -871,20 +930,26 @@ def api_update_reply_to(chat_id, message_id):
     data = request.get_json(silent=True) or {}
     new_reply_to = data.get('reply_to')
 
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        placeholder = "?" if not USE_POSTGRES else "%s"
         # Check if message exists
-        cur = conn.execute("SELECT sender_username, reply_to FROM messages WHERE id = ? AND chat_id = ?", (message_id, chat_id))
+        cur.execute(f"SELECT sender_username, reply_to FROM messages WHERE id = {placeholder} AND chat_id = {placeholder}", (message_id, chat_id))
         msg = cur.fetchone()
         if not msg:
             return jsonify({'error': 'Message not found.'}), 404
 
+        msg_sender = msg[0] if isinstance(msg, tuple) else msg['sender_username']
         # Allow updating reply_to if it's an AI message
-        if msg[0] != 'AI':
+        if msg_sender != 'AI':
             return jsonify({'error': 'Can only update reply_to for AI messages.'}), 403
 
         # Update reply_to
-        conn.execute("UPDATE messages SET reply_to = ? WHERE id = ?", (new_reply_to, message_id))
+        cur.execute(f"UPDATE messages SET reply_to = {placeholder} WHERE id = {placeholder}", (new_reply_to, message_id))
         conn.commit()
+    finally:
+        conn.close()
 
     return jsonify({'success': True}), 200
 
@@ -900,12 +965,16 @@ def api_create_chat():
     if not name or not password:
         return jsonify({'error': 'Name and password are required.'}), 400
     username = user_session.get('username') or ''
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         chat_id = _generate_chat_id(conn)
         pw_hash = generate_password_hash(password)
-        conn.execute(load_sql('insert_chat'), (chat_id, name, pw_hash, username))
-        conn.execute(load_sql('insert_chat_member'), (chat_id, username))
+        cur = conn.cursor()
+        cur.execute(load_sql('insert_chat'), (chat_id, name, pw_hash, username))
+        cur.execute(load_sql('insert_chat_member'), (chat_id, username))
         conn.commit()
+    finally:
+        conn.close()
     return jsonify({'chat': {'id': chat_id, 'name': name}}), 201
 
 
@@ -919,18 +988,22 @@ def api_join_chat():
     password = data.get('password') or ''
     if not chat_id or not password:
         return jsonify({'error': 'Chat ID and password are required.'}), 400
-    with get_db_connection() as conn:
-        cur = conn.execute(load_sql('get_chat_by_id'), (chat_id,))
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(load_sql('get_chat_by_id'), (chat_id,))
         row = cur.fetchone()
         if not row:
             return jsonify({'error': 'Chat not found.'}), 404
-        chat = dict(row)
+        chat = row_to_dict(row, cur)
         if not check_password_hash(chat['password_hash'], password):
             return jsonify({'error': 'Invalid chat password.'}), 403
         username = user_session.get('username') or ''
-        conn.execute(load_sql('insert_chat_member'), (chat_id, username))
+        cur.execute(load_sql('insert_chat_member'), (chat_id, username))
         conn.commit()
         return jsonify({'chat': {'id': chat_id, 'name': chat['name']}}), 200
+    finally:
+        conn.close()
 
 
 @app.route('/api/admin/clear-db', methods=['POST'])
@@ -943,16 +1016,23 @@ def api_admin_clear_db():
     if not provided or provided != admin_token:
         return jsonify({'error': 'Forbidden'}), 403
 
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
         # Count existing rows
-        users_before = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-        chats_before = conn.execute('SELECT COUNT(*) FROM chats').fetchone()[0]
-        members_before = conn.execute('SELECT COUNT(*) FROM chat_members').fetchone()[0]
+        cur.execute('SELECT COUNT(*) FROM users')
+        users_before = cur.fetchone()[0]
+        cur.execute('SELECT COUNT(*) FROM chats')
+        chats_before = cur.fetchone()[0]
+        cur.execute('SELECT COUNT(*) FROM chat_members')
+        members_before = cur.fetchone()[0]
         # Wipe in a safe order (members -> chats -> users), though no FKs are enforced.
-        conn.execute('DELETE FROM chat_members')
-        conn.execute('DELETE FROM chats')
-        conn.execute('DELETE FROM users')
+        cur.execute('DELETE FROM chat_members')
+        cur.execute('DELETE FROM chats')
+        cur.execute('DELETE FROM users')
         conn.commit()
+    finally:
+        conn.close()
     # Clear session to avoid stale references
     session.pop('user', None)
 
@@ -1014,12 +1094,16 @@ init_db()
 def _clear_db_on_start_if_needed():
     flag = os.environ.get('CLEAR_DB_ON_START', '0')
     if str(flag).strip() == '1':
-        with get_db_connection() as conn:
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
             # Wipe in safe order (members -> chats -> users)
-            conn.execute('DELETE FROM chat_members')
-            conn.execute('DELETE FROM chats')
-            conn.execute('DELETE FROM users')
+            cur.execute('DELETE FROM chat_members')
+            cur.execute('DELETE FROM chats')
+            cur.execute('DELETE FROM users')
             conn.commit()
+        finally:
+            conn.close()
         print('Cleared databases on startup because CLEAR_DB_ON_START=1')
 
 
