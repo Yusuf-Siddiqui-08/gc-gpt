@@ -14,12 +14,53 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from ChatAgent import ChatAgent
 from ResponseFormatter import ResponseFormatter
 
+# Try importing PostgreSQL support
+try:
+    import psycopg2
+    import psycopg2.extras
+    HAS_PSYCOPG = True
+except ImportError:
+    HAS_PSYCOPG = False
+
 # Paths
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 BUILD_DIR = os.path.join(BASE_DIR, 'client', 'build')
 STATIC_DIR = os.path.join(BUILD_DIR, 'static')
 DATABASE = os.path.join(BASE_DIR, 'app.db')
 SQL_DIR = os.path.join(BASE_DIR, 'sql')
+
+# Database configuration
+def _get_pg_dsn():
+    """Build PostgreSQL DSN from environment variables.
+    Supports DATABASE_URL or individual PG* variables."""
+    url = os.getenv("DATABASE_URL")
+    if url:
+        return url
+    host = os.getenv("PGHOST")
+    if not host:
+        return None
+    port = os.getenv("PGPORT", "5432")
+    database = os.getenv("PGDATABASE")
+    user = os.getenv("PGUSER")
+    password = os.getenv("PGPASSWORD")
+    sslmode = os.getenv("PGSSLMODE", "prefer")
+    return f"postgresql://{user}:{password}@{host}:{port}/{database}?sslmode={sslmode}"
+
+def _is_postgres():
+    """Check if PostgreSQL is configured and available."""
+    if not HAS_PSYCOPG:
+        return False
+    dsn = _get_pg_dsn()
+    if not dsn:
+        return False
+    try:
+        conn = psycopg2.connect(dsn)
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+USE_POSTGRES = _is_postgres()
 
 # ChatAgent configuration
 CHAT_MODEL = "deepseek-v3.1:671b-cloud"
@@ -32,15 +73,17 @@ def get_chat_agent(messages=None):
 _SQL_CACHE = {}
 
 def load_sql(name: str) -> str:
-    """Load SQL text by key from sql/main.sql.
+    """Load SQL text by key from sql/postgres.sql or sql/main.sql.
     Sections are marked by lines starting with "-- name: <key>".
     Key caches results for the lifetime of the process.
     """
     if name in _SQL_CACHE:
         return _SQL_CACHE[name]
 
-    # Try loading from main.sql once and cache all entries
-    master_path = os.path.join(SQL_DIR, 'main.sql')
+    # Choose SQL file based on database type
+    sql_file = 'postgres.sql' if USE_POSTGRES else 'main.sql'
+    master_path = os.path.join(SQL_DIR, sql_file)
+
     if os.path.exists(master_path) and '_MASTER_PARSED' not in _SQL_CACHE:
         try:
             with open(master_path, 'r', encoding='utf-8') as f:
@@ -61,15 +104,15 @@ def load_sql(name: str) -> str:
             flush()
             _SQL_CACHE['_MASTER_PARSED'] = '1'
         except Exception as e:
-            # Surface an explicit error if main.sql cannot be parsed/read
-            raise RuntimeError(f"Failed to load or parse main.sql: {e}")
+            # Surface an explicit error if SQL file cannot be parsed/read
+            raise RuntimeError(f"Failed to load or parse {sql_file}: {e}")
 
     if name in _SQL_CACHE:
         return _SQL_CACHE[name]
 
     # No fallback to individual files; explicit error helps catch typos/missing queries
     available = [k for k in _SQL_CACHE.keys() if not k.startswith('_')]
-    raise KeyError(f"SQL key '{name}' not found in main.sql. Available keys: {available}")
+    raise KeyError(f"SQL key '{name}' not found in {sql_file}. Available keys: {available}")
 
 # Create Flask app configured to serve the React build + JSON APIs
 app = Flask(
@@ -90,9 +133,28 @@ CORS(app, supports_credentials=True, origins=['*'])  # Enable credentials for CO
 
 
 def get_db_connection():
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Get database connection (PostgreSQL or SQLite)."""
+    if USE_POSTGRES:
+        conn = psycopg2.connect(_get_pg_dsn())
+        conn.cursor_factory = psycopg2.extras.RealDictCursor
+        return conn
+    else:
+        conn = sqlite3.connect(DATABASE)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+
+def row_to_dict(row, cursor=None):
+    """Convert database row to dictionary."""
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return dict(row)
+    if hasattr(row, 'keys'):
+        return dict(row)
+    if cursor and hasattr(cursor, 'description'):
+        return dict(zip([desc[0] for desc in cursor.description], row))
+    return dict(row)
 
 
 def random_profile_color() -> str:
@@ -110,60 +172,83 @@ def update_user_profile_color(user_id: int, color: str):
 
 def init_db():
     os.makedirs(BASE_DIR, exist_ok=True)
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
         # Create base tables if they don't exist
-        conn.execute(load_sql('create_table_users'))
-        conn.execute(load_sql('create_table_chats'))
-        conn.execute(load_sql('create_table_chat_members'))
+        cur.execute(load_sql('create_table_users'))
+        cur.execute(load_sql('create_table_chats'))
+        cur.execute(load_sql('create_table_chat_members'))
         # Create messages table and index
         try:
-            conn.execute(load_sql('create_table_messages'))
-            conn.execute(load_sql('create_index_messages_chat'))
+            cur.execute(load_sql('create_table_messages'))
+            cur.execute(load_sql('create_index_messages_chat'))
         except Exception:
             pass
 
         # Ensure columns exist on messages (lightweight auto-migration)
-        try:
-            cur_msg = conn.execute("PRAGMA table_info(messages)")
-            msg_cols = [row[1] for row in cur_msg.fetchall()]
-            if 'edited_at' not in msg_cols:
-                conn.execute("ALTER TABLE messages ADD COLUMN edited_at TIMESTAMP")
-            if 'original_content' not in msg_cols:
-                conn.execute("ALTER TABLE messages ADD COLUMN original_content TEXT")
-            conn.commit()
-        except Exception:
-            pass
+        if not USE_POSTGRES:
+            try:
+                cur_msg = cur.execute("PRAGMA table_info(messages)")
+                msg_cols = [row[1] for row in cur_msg.fetchall()]
+                if 'edited_at' not in msg_cols:
+                    cur.execute("ALTER TABLE messages ADD COLUMN edited_at TIMESTAMP")
+                if 'original_content' not in msg_cols:
+                    cur.execute("ALTER TABLE messages ADD COLUMN original_content TEXT")
+            except Exception:
+                pass
+        else:
+            # PostgreSQL: Check columns differently
+            try:
+                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'messages'")
+                msg_cols = [row[0] if isinstance(row, tuple) else row['column_name'] for row in cur.fetchall()]
+                if 'edited_at' not in msg_cols:
+                    cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMP")
+                if 'original_content' not in msg_cols:
+                    cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS original_content TEXT")
+            except Exception:
+                pass
 
         # Ensure columns exist on users (lightweight auto-migration)
-        cur = conn.execute(load_sql('pragma_table_info_users'))
-        cols = [row[1] for row in cur.fetchall()]
-
+        if not USE_POSTGRES:
+            cur.execute(load_sql('pragma_table_info_users'))
+            cols = [row[1] for row in cur.fetchall()]
+        else:
+            cur.execute(load_sql('pragma_table_info_users'))
+            cols = [row[0] if isinstance(row, tuple) else row['column_name'] for row in cur.fetchall()]
 
         if 'profile_color' not in cols:
-            conn.execute(load_sql('alter_table_add_profile_color'))
+            cur.execute(load_sql('alter_table_add_profile_color'))
         if 'username' not in cols:
             # add username column for existing DBs
-            conn.execute(load_sql('alter_table_add_username'))
-            # backfill usernames for existing rows deterministically (no dependency on removed fields)
-            cur2 = conn.execute("SELECT id FROM users WHERE username IS NULL OR username = ''")
-            rows = cur2.fetchall()
+            cur.execute(load_sql('alter_table_add_username'))
+            # backfill usernames for existing rows deterministically
+            placeholder = "?" if not USE_POSTGRES else "%s"
+            cur.execute(f"SELECT id FROM users WHERE username IS NULL OR username = ''")
+            rows = cur.fetchall()
             for r in rows:
-                uid = r[0]
+                uid = r[0] if isinstance(r, tuple) else r['id']
                 base = f'user{uid}'
                 candidate = base
                 # ensure uniqueness
                 while True:
-                    c = conn.execute("SELECT id FROM users WHERE username = ?", (candidate,)).fetchone()
+                    cur.execute(f"SELECT id FROM users WHERE username = {placeholder}", (candidate,))
+                    c = cur.fetchone()
                     if not c:
                         break
                     candidate = f"{base}{uid}"
-                conn.execute("UPDATE users SET username = ? WHERE id = ?", (candidate, uid))
+                cur.execute(f"UPDATE users SET username = {placeholder} WHERE id = {placeholder}", (candidate, uid))
             # add unique index for username
             try:
-                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE)")
+                if USE_POSTGRES:
+                    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(LOWER(username))")
+                else:
+                    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE)")
             except Exception:
                 pass
         conn.commit()
+    finally:
+        conn.close()
 
 
 def get_user_by_username(username: str):
@@ -178,13 +263,22 @@ def get_user_by_username(username: str):
 
 
 def create_user(name: str, username: str, password_hash: str, profile_color: str = None):
-    with get_db_connection() as conn:
-        cur = conn.execute(
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
             load_sql('insert_user'),
             (name, username, password_hash, profile_color),
         )
+        if USE_POSTGRES:
+            result = cur.fetchone()
+            user_id = result[0] if isinstance(result, tuple) else result['id']
+        else:
+            user_id = cur.lastrowid
         conn.commit()
-        return cur.lastrowid
+        return user_id
+    finally:
+        conn.close()
 
 
 @app.route('/api/health')
@@ -324,26 +418,31 @@ def api_update_profile():
                 return jsonify({'error': 'An account with that username already exists.'}), 409
 
     # Perform update
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         updates = []
         params = []
+        placeholder = "?" if not USE_POSTGRES else "%s"
         if new_name != db_user['name']:
-            updates.append('name = ?')
+            updates.append(f'name = {placeholder}')
             params.append(new_name)
         if new_username != db_user['username']:
-            updates.append('username = ?')
+            updates.append(f'username = {placeholder}')
             params.append(new_username)
         if profile_color and profile_color != (db_user.get('profile_color') or ''):
-            updates.append('profile_color = ?')
+            updates.append(f'profile_color = {placeholder}')
             params.append(profile_color)
         if password:
-            updates.append('password_hash = ?')
+            updates.append(f'password_hash = {placeholder}')
             params.append(generate_password_hash(password))
         if updates:
             sql = load_sql('update_user_dynamic').replace('/*SET_CLAUSE*/', ', '.join(updates))
             params.append(db_user['id'])
-            conn.execute(sql, tuple(params))
+            cur = conn.cursor()
+            cur.execute(sql, tuple(params))
             conn.commit()
+    finally:
+        conn.close()
 
     updated = {
         'name': new_name,
@@ -579,13 +678,22 @@ def api_send_message(chat_id):
         reply_to = None
     
     # Store the user's message
-    with get_db_connection() as conn:
-        cur = conn.execute(load_sql('insert_message'), (chat_id, username, content, reply_to))
-        msg_id = cur.lastrowid
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(load_sql('insert_message'), (chat_id, username, content, reply_to))
+        if USE_POSTGRES:
+            result = cur.fetchone()
+            msg_id = result[0] if isinstance(result, tuple) else result['id']
+        else:
+            msg_id = cur.lastrowid
         conn.commit()
-        cur2 = conn.execute(load_sql('get_message_by_id'), (msg_id,))
+        cur2 = conn.cursor()
+        cur2.execute(load_sql('get_message_by_id'), (msg_id,))
         row = cur2.fetchone()
-    msg = dict(row)
+    finally:
+        conn.close()
+    msg = row_to_dict(row, cur2)
     # hydrate sender meta
     sender = get_user_by_username(username)
     msg['sender_name'] = sender.get('name') if sender else username
@@ -635,14 +743,23 @@ def api_send_message(chat_id):
                     formatted_response = ResponseFormatter.format(ai_response)
 
                     # Insert AI response as a message from "AI" user
-                    with get_db_connection() as conn:
-                        cur = conn.execute(load_sql('insert_message'), (chat_id, 'AI', formatted_response, msg_id))
-                        ai_msg_id = cur.lastrowid
-                        conn.commit()
-                        cur2 = conn.execute(load_sql('get_message_by_id'), (ai_msg_id,))
+                    conn2 = get_db_connection()
+                    try:
+                        cur = conn2.cursor()
+                        cur.execute(load_sql('insert_message'), (chat_id, 'AI', formatted_response, msg_id))
+                        if USE_POSTGRES:
+                            result = cur.fetchone()
+                            ai_msg_id = result[0] if isinstance(result, tuple) else result['id']
+                        else:
+                            ai_msg_id = cur.lastrowid
+                        conn2.commit()
+                        cur2 = conn2.cursor()
+                        cur2.execute(load_sql('get_message_by_id'), (ai_msg_id,))
                         ai_row = cur2.fetchone()
-                    
-                    ai_msg = dict(ai_row)
+                    finally:
+                        conn2.close()
+
+                    ai_msg = row_to_dict(ai_row, cur2)
                     ai_msg['sender_name'] = f'AI - {CHAT_MODEL_DISPLAY_NAME} ({response_time_s:.1f}s)'
                     ai_msg['sender_profile_color'] = '#3b82f6'  # Blue color for AI
                     ai_msg['is_self'] = False
@@ -917,4 +1034,8 @@ if __name__ == '__main__':
 
     print(f"Starting Flask server on http://{host}:{port}")
     print(f"Serving static files from: {BUILD_DIR}")
+    if USE_POSTGRES:
+        print("Database: PostgreSQL (production mode)")
+    else:
+        print(f"Database: SQLite at {DATABASE} (development mode)")
     app.run(host=host, port=port, debug=False)

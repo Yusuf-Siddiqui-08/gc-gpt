@@ -659,6 +659,15 @@ function Chat({ chatId, user, go }) {
       return;
     }
     loadChat();
+
+    // Poll for new messages every 2 seconds
+    const pollInterval = setInterval(() => {
+      if (!sending) {
+        checkForNewMessages();
+      }
+    }, 2000);
+
+    return () => clearInterval(pollInterval);
   }, [chatId, user]);
 
   // Optimized MathJax typesetting - only process new messages
@@ -782,6 +791,34 @@ function Chat({ chatId, user, go }) {
       console.error('Failed to load older messages:', err);
     } finally {
       setLoadingOlder(false);
+    }
+  }
+
+  async function checkForNewMessages() {
+    if (messages.length === 0) return;
+
+    try {
+      // Get the ID of the latest message we have
+      const latestMessageId = messages[messages.length - 1].id;
+
+      // Check if there are newer messages
+      const res = await api('GET', `/api/chats/${chatId}/messages?since_id=${latestMessageId}&check_only=1`);
+
+      if (res.has_updates) {
+        // Fetch the new messages
+        const messagesRes = await api('GET', `/api/chats/${chatId}/messages`);
+        const allMessages = messagesRes.messages || [];
+
+        // Filter out messages we already have and add only new ones
+        const newMessages = allMessages.filter(msg => msg.id > latestMessageId);
+
+        if (newMessages.length > 0) {
+          setMessages(prev => [...prev, ...newMessages]);
+        }
+      }
+    } catch (err) {
+      // Silently fail - don't interrupt the user experience
+      console.error('Failed to check for new messages:', err);
     }
   }
 

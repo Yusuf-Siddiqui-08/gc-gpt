@@ -98,14 +98,79 @@ This is designed so a frontend can render composite chat logos:
 - CORS is enabled via `flask-cors` for convenience during development.
 
 ## SQL management
-- Queries are centralized in `sql/main.sql` using sections marked by lines like `-- name: query_key`.
-- The app loads SQL by key via `load_sql('query_key')` from `sql/main.sql`. All queries must be defined there; there is no fallback to individual files.
+- Queries are centralized in `sql/main.sql` (SQLite) or `sql/postgres.sql` (PostgreSQL) using sections marked by lines like `-- name: query_key`.
+- The app automatically loads the appropriate SQL file based on the database type.
 - To add or modify a query:
-  1. Edit `sql/main.sql` and add a new section:
-     
+  1. Edit both `sql/main.sql` and `sql/postgres.sql` and add a new section:
+
      -- name: my_new_query
      SELECT ...;
   2. Update code to call `load_sql('my_new_query')`.
+  3. Note: PostgreSQL uses `%s` placeholders, SQLite uses `?` placeholders.
+
+## Database Configuration
+
+The application supports both SQLite (for local development) and PostgreSQL (for production deployment on Railway).
+
+### Local Development (SQLite)
+By default, the app uses SQLite with a database file at `app.db`. No configuration needed.
+
+### Production Deployment (PostgreSQL on Railway)
+
+The app automatically detects and uses PostgreSQL when the following environment variables are present:
+
+#### Option 1: Using DATABASE_URL (Recommended for Railway)
+Railway automatically provides this variable when you provision a PostgreSQL database:
+```
+DATABASE_URL=postgresql://user:password@host:port/database
+```
+
+#### Option 2: Using individual PostgreSQL variables
+```
+PGHOST=your-postgres-host
+PGPORT=5432
+PGDATABASE=your-database-name
+PGUSER=your-username
+PGPASSWORD=your-password
+PGSSLMODE=prefer
+```
+
+### Deploying to Railway
+
+1. **Create a new project on Railway**
+   - Go to [Railway.app](https://railway.app)
+   - Click "New Project"
+   - Connect your GitHub repository
+
+2. **Add a PostgreSQL database**
+   - Click "New" → "Database" → "Add PostgreSQL"
+   - Railway will automatically provision a database and set the `DATABASE_URL` environment variable
+
+3. **Set environment variables** (in Railway dashboard under Variables):
+   ```
+   SECRET_KEY=your-secret-key-here
+   SESSION_COOKIE_SECURE=True
+   PORT=8080
+   ```
+
+4. **Deploy**
+   - Railway will automatically detect the `requirements.txt` and `app.py`
+   - Your app will be deployed and accessible via a Railway domain
+
+5. **Database migrations**
+   - The app automatically creates tables on first run
+   - No manual migration needed
+
+### Environment Variables Reference
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `DATABASE_URL` | PostgreSQL connection string | None | No (uses SQLite if not set) |
+| `SECRET_KEY` | Flask secret key for sessions | `dev-secret-change-me` | Yes (for production) |
+| `SESSION_COOKIE_SECURE` | Use secure cookies (HTTPS only) | `True` | No |
+| `PORT` | Server port | `8080` | No |
+| `CLEAR_DB_ON_START` | Clear database on startup (1=yes) | `0` | No |
+| `ADMIN_TOKEN` | Token for admin endpoints | None | No |
 
 ---
 
