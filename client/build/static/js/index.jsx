@@ -91,7 +91,18 @@ async function api(method, url, body) {
   return data;
 }
 
-function Navbar({ user, onLogout, go }) {
+function formatTime(ts) {
+  try {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const opts = sameDay ? { hour: '2-digit', minute: '2-digit' } : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    return d.toLocaleString(undefined, opts);
+  } catch { return ''; }
+}
+
+function Navbar({ user, onLogout, go, theme, toggleTheme }) {
   const [open, setOpen] = useState(false);
   const boxRef = useRef(null);
   useEffect(() => {
@@ -106,6 +117,7 @@ function Navbar({ user, onLogout, go }) {
   return React.createElement('nav', { className: 'gcapp-navbar' },
     React.createElement('a', { className: 'gcapp-brand', onClick: () => go('/') }, 'Group Chat GPT'),
     React.createElement('div', { className: 'gcapp-navRight' },
+      React.createElement('button', { className: 'theme-toggle', onClick: toggleTheme, title: theme === 'dark' ? 'Switch to light' : 'Switch to dark', 'aria-label': 'Toggle theme' }, theme === 'dark' ? '🌙' : '☀️'),
       user ? React.createElement('div', { ref: boxRef, className: 'gcapp-rel' },
         React.createElement('button', {
           onClick: () => setOpen((v) => !v),
@@ -401,24 +413,17 @@ function MessageItem({ msg, prevSenderId, onEdit, onDelete }) {
 
   const handleEditClick = () => {
     setShowMenu(false);
-    // Extract text content from HTML for editing
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = msg.content;
     let textContent = tempDiv.textContent || tempDiv.innerText || '';
-
-    // Remove /AI prefix if present (so user edits the actual message content)
     if (textContent.startsWith('/AI ')) {
-      textContent = textContent.substring(4); // Remove '/AI '
+      textContent = textContent.substring(4);
     }
-
     setEditContent(textContent);
     setIsEditing(true);
   };
 
-  const handleDeleteClick = () => {
-    setShowMenu(false);
-    onDelete(msg.id);
-  };
+  const handleDeleteClick = () => { setShowMenu(false); onDelete(msg.id); };
 
   const handleSaveEdit = async () => {
     if (editContent.trim() && !isSaving) {
@@ -426,213 +431,61 @@ function MessageItem({ msg, prevSenderId, onEdit, onDelete }) {
       try {
         await onEdit(msg.id, editContent.trim());
         setIsEditing(false);
-      } finally {
-        setIsSaving(false);
-      }
+      } finally { setIsSaving(false); }
     }
   };
 
-  const handleCancelEdit = () => {
-    setIsEditing(false);
-    setEditContent('');
-  };
+  const handleCancelEdit = () => { setIsEditing(false); setEditContent(''); };
+
+  const meta = React.createElement('div', { className: 'message-meta' },
+    msg.sender_name || msg.user_username,
+    msg.edited_at && React.createElement('span', {
+      onClick: () => setShowOriginal(!showOriginal),
+      style: { fontWeight: 'bold', cursor: 'pointer', color: 'var(--chart-2)', userSelect: 'none' },
+      title: showOriginal ? 'Hide original message' : 'Show original message'
+    }, 'Edited'),
+    msg.created_at && React.createElement('span', { style: { marginLeft: 8, opacity: 0.8 } }, formatTime(msg.created_at))
+  );
+
+  const bubble = isEditing
+    ? React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, width: '100%', maxWidth: '88%' } },
+        React.createElement('textarea', {
+          value: editContent, onChange: (e) => setEditContent(e.target.value),
+          className: 'gcapp-input', style: { minHeight: 90, resize: 'vertical', fontFamily: 'inherit' }
+        }),
+        React.createElement('div', { style: { display: 'flex', gap: 8 } },
+          React.createElement('button', { className: 'btn primary', onClick: handleSaveEdit, disabled: isSaving, style: { fontSize: 12, padding: '6px 12px' } }, isSaving ? 'Thinking...' : 'Save'),
+          !isSaving && React.createElement('button', { className: 'btn outline', onClick: handleCancelEdit, style: { fontSize: 12, padding: '6px 12px' } }, 'Cancel')
+        )
+      )
+    : React.createElement('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8, maxWidth: '88%', position: 'relative' } },
+        msg.is_self && isHovering && React.createElement('div', { ref: menuRef, style: { position: 'relative', display: 'flex', alignItems: 'center' } },
+          React.createElement('button', {
+            onClick: (e) => { e.stopPropagation(); setShowMenu(!showMenu); },
+            style: { background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 16, padding: 4, color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24 },
+            title: 'Message options'
+          }, '⋮'),
+          showMenu && React.createElement('div', {
+            style: { position: 'absolute', top: '100%', left: 0, background: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 12, padding: 6, minWidth: 150, zIndex: 1000, boxShadow: 'var(--shadow)', marginTop: 6 }
+          },
+            React.createElement('button', { onClick: handleEditClick, style: { width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', padding: '10px 12px', color: 'var(--popover-foreground)', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, borderRadius: 8 }, title: 'Edit message' }, '✏️', ' Edit'),
+            React.createElement('button', { onClick: handleDeleteClick, style: { width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', padding: '10px 12px', color: '#ef4444', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, borderRadius: 8 }, title: 'Delete message' }, '🗑️', ' Delete')
+          )
+        ),
+        React.createElement('div', { className: `chat-bubble ${msg.is_self ? 'me' : 'other'}` , dangerouslySetInnerHTML: { __html: msg.content } })
+      );
+
+  const original = showOriginal && msg.original_content && React.createElement('div', {
+    className: 'chat-bubble other',
+    style: { maxWidth: '88%', borderStyle: 'dashed', opacity: 0.8, fontStyle: 'italic' },
+    dangerouslySetInnerHTML: { __html: msg.original_content }
+  });
 
   return React.createElement('div', {
     className: 'message-bubble',
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: msg.is_self ? 'flex-end' : 'flex-start',
-      gap: 4,
-      width: '100%'
-    },
-    onMouseEnter: () => setIsHovering(true),
-    onMouseLeave: () => setIsHovering(false)
-  },
-    React.createElement('div', {
-      style: { fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 8, alignItems: 'center' }
-    },
-      msg.sender_name || msg.user_username,
-      msg.edited_at && React.createElement('span', {
-        onClick: () => setShowOriginal(!showOriginal),
-        style: {
-          fontWeight: 'bold',
-          cursor: 'pointer',
-          color: '#3b82f6',
-          userSelect: 'none'
-        },
-        title: showOriginal ? 'Hide original message' : 'Show original message'
-      }, 'Edited')
-    ),
-    showOriginal && msg.original_content && React.createElement('div', {
-      style: {
-        maxWidth: '70%',
-        padding: '12px 16px',
-        borderRadius: 18,
-        background: 'rgba(128,128,128,0.3)',
-        color: '#999',
-        wordWrap: 'break-word',
-        fontStyle: 'italic',
-        marginBottom: 4,
-        border: '1px dashed rgba(255,255,255,0.2)'
-      },
-      dangerouslySetInnerHTML: { __html: msg.original_content }
-    }),
-    isEditing ? React.createElement('div', {
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        width: '100%',
-        maxWidth: '70%'
-      }
-    },
-      React.createElement('textarea', {
-        value: editContent,
-        onChange: (e) => setEditContent(e.target.value),
-        style: {
-          padding: '12px 16px',
-          borderRadius: 12,
-          border: '1px solid rgba(255,255,255,0.12)',
-          background: 'rgba(255,255,255,0.08)',
-          color: 'var(--text)',
-          outline: 'none',
-          minHeight: '80px',
-          resize: 'vertical',
-          fontFamily: 'inherit'
-        }
-      }),
-      React.createElement('div', { style: { display: 'flex', gap: 8 } },
-        React.createElement('button', {
-          className: 'btn primary',
-          onClick: handleSaveEdit,
-          disabled: isSaving,
-          style: { fontSize: 12, padding: '6px 12px' }
-        }, isSaving ? 'Thinking...' : 'Save'),
-        !isSaving && React.createElement('button', {
-          className: 'btn outline',
-          onClick: handleCancelEdit,
-          style: { fontSize: 12, padding: '6px 12px' }
-        }, 'Cancel')
-      )
-    ) : React.createElement('div', {
-      style: {
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 8,
-        maxWidth: '70%',
-        position: 'relative'
-      }
-    },
-      // 3-dot menu button (shown on hover for user's own messages)
-      msg.is_self && isHovering && React.createElement('div', {
-        ref: menuRef,
-        style: {
-          position: 'relative',
-          display: 'flex',
-          alignItems: 'center'
-        }
-      },
-        React.createElement('button', {
-          onClick: (e) => {
-            e.stopPropagation();
-            setShowMenu(!showMenu);
-          },
-          style: {
-            background: 'transparent',
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: 16,
-            padding: 4,
-            color: 'var(--muted)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 24,
-            height: 24
-          },
-          title: 'Message options'
-        }, '⋮'),
-        // Dropdown menu
-        showMenu && React.createElement('div', {
-          style: {
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            background: 'rgba(20,20,25,0.98)',
-            border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: 12,
-            padding: '6px',
-            minWidth: 150,
-            zIndex: 1000,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3)',
-            marginTop: 6,
-            backdropFilter: 'blur(10px)'
-          }
-        },
-          React.createElement('button', {
-            onClick: handleEditClick,
-            style: {
-              width: '100%',
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '10px 12px',
-              color: 'var(--text)',
-              textAlign: 'left',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              fontSize: 14,
-              borderRadius: 8,
-              transition: 'background 0.15s ease'
-            },
-            onMouseEnter: (e) => e.target.style.background = 'rgba(255,255,255,0.12)',
-            onMouseLeave: (e) => e.target.style.background = 'transparent',
-            title: 'Edit message'
-          }, '✏️', ' Edit'),
-          React.createElement('button', {
-            onClick: handleDeleteClick,
-            style: {
-              width: '100%',
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '10px 12px',
-              color: '#ef4444',
-              textAlign: 'left',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              fontSize: 14,
-              borderRadius: 8,
-              transition: 'background 0.15s ease'
-            },
-            onMouseEnter: (e) => {
-              e.target.style.background = 'rgba(239,68,68,0.15)';
-              e.target.style.color = '#fca5a5';
-            },
-            onMouseLeave: (e) => {
-              e.target.style.background = 'transparent';
-              e.target.style.color = '#ef4444';
-            },
-            title: 'Delete message'
-          }, '🗑️', ' Delete')
-        )
-      ),
-      React.createElement('div', {
-        style: {
-          flex: 1,
-          padding: '12px 16px',
-          borderRadius: 18,
-          background: msg.is_self ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
-          color: msg.is_self ? '#fff' : undefined,
-          wordWrap: 'break-word'
-        },
-        dangerouslySetInnerHTML: { __html: msg.content }
-      })
-    )
-  );
+    style: { alignItems: msg.is_self ? 'flex-end' : 'flex-start', gap: 6, width: '100%' },
+    onMouseEnter: () => setIsHovering(true), onMouseLeave: () => setIsHovering(false)
+  }, meta, original, bubble);
 }
 
 function Chat({ chatId, user, go }) {
@@ -1010,126 +863,36 @@ function Chat({ chatId, user, go }) {
   if (loading) {
     return React.createElement('div', { className: 'gcapp-panel' }, 'Loading chat...');
   }
-
   if (error) {
     return React.createElement('div', { className: 'gcapp-panel' },
       React.createElement('div', { className: 'gcapp-error' }, error),
-      React.createElement('button', {
-        className: 'btn primary',
-        onClick: () => go('/my-conversations')
-      }, 'Back to Conversations')
+      React.createElement('button', { className: 'btn primary', onClick: () => go('/my-conversations') }, 'Back to Conversations')
     );
   }
 
-  return React.createElement('div', { style: { height: '100vh', display: 'flex', flexDirection: 'column', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, paddingTop: '64px' } },
-    React.createElement('div', {
-      style: {
-        padding: '16px 24px',
-        borderBottom: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(255,255,255,0.05)'
-      }
-    },
-      React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
-        React.createElement('button', {
-          className: 'btn outline',
-          onClick: () => go('/my-conversations')
-        }, '← Back'),
+  return React.createElement('div', { className: 'chat-page' },
+    React.createElement('div', { className: 'chat-header' },
+      React.createElement('div', { className: 'chat-inner' },
+        React.createElement('button', { className: 'btn outline', onClick: () => go('/my-conversations') }, '← Back'),
         React.createElement('div', null,
-          React.createElement('h2', { style: { margin: 0 } }, chat?.name || 'Chat'),
+          React.createElement('h2', { className: 'mt-0', style: { margin: 0 } }, chat?.name || 'Chat'),
           React.createElement('div', { className: 'muted small' }, `ID: ${chatId}`)
         )
       )
     ),
-    React.createElement('div', {
-      ref: messagesContainerRef,
-      style: {
-        flex: 1,
-        padding: '20px',
-        overflowY: 'auto',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 0,
-        position: 'relative'
-      }
-    },
-      loadingOlder && React.createElement('div', {
-        style: {
-          textAlign: 'center',
-          padding: '10px',
-          color: 'var(--muted)',
-          fontSize: '14px'
-        }
-      }, 'Loading older messages...'),
-      messageElements,
-      React.createElement('div', { ref: messagesEndRef })
+    React.createElement('div', { ref: messagesContainerRef, className: 'chat-scroll' },
+      React.createElement('div', { className: 'chat-body' },
+        loadingOlder && React.createElement('div', { style: { textAlign: 'center', padding: 10, color: 'var(--muted-foreground)', fontSize: 14 } }, 'Loading older messages...'),
+        messageElements,
+        React.createElement('div', { ref: messagesEndRef })
+      )
     ),
-    React.createElement('form', {
-      onSubmit: sendMessage,
-      style: {
-        padding: '16px 20px',
-        borderRadius: '16px',
-        border: '1px solid rgba(255,255,255,0.12)',
-        background: 'rgba(255,255,255,0.08)',
-        display: 'flex',
-        gap: 12,
-        alignItems: 'center',
-        flexShrink: 0,
-        margin: '16px 20px 20px 20px'
-      }
-    },
-      // AI Toggle Button
-      React.createElement('button', {
-        type: 'button',
-        onClick: () => setAiEnabled(!aiEnabled),
-        'aria-label': aiEnabled ? 'AI mode enabled' : 'Enable AI mode',
-        title: aiEnabled ? 'AI mode enabled - next message will include /AI' : 'Enable AI mode',
-        style: {
-          width: 44,
-          height: 44,
-          borderRadius: '50%',
-          border: aiEnabled ? '2px solid #3b82f6' : '1px solid rgba(255,255,255,0.12)',
-          background: aiEnabled ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
-          color: aiEnabled ? '#3b82f6' : 'rgba(255,255,255,0.5)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 20,
-          transition: 'all 0.2s ease',
-          flexShrink: 0
-        }
-      },
-        React.createElement('span', {
-          style: {
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontFamily: 'system-ui, -apple-system, sans-serif'
-          }
-        }, '🤖')
+    React.createElement('form', { onSubmit: sendMessage, className: 'chat-composer' },
+      React.createElement('button', { type: 'button', onClick: () => setAiEnabled(!aiEnabled), 'aria-label': aiEnabled ? 'AI mode enabled' : 'Enable AI mode', title: aiEnabled ? 'AI mode enabled - next message will include /AI' : 'Enable AI mode', className: 'gc-composer-left', style: { border: aiEnabled ? '2px solid var(--chart-2)' : undefined, color: aiEnabled ? 'var(--chart-2)' : undefined } },
+        React.createElement('span', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '🤖')
       ),
-      React.createElement('input', {
-        type: 'text',
-        value: newMessage,
-        onChange: (e) => setNewMessage(e.target.value),
-        placeholder: aiEnabled ? 'Message with AI...' : 'Type a message...',
-        disabled: sending,
-        style: {
-          flex: 1,
-          padding: '12px 16px',
-          borderRadius: 25,
-          border: aiEnabled ? '1px solid rgba(59,130,246,0.3)' : '1px solid rgba(255,255,255,0.12)',
-          background: 'rgba(255,255,255,0.06)',
-          color: 'var(--text)',
-          outline: 'none'
-        }
-      }),
-      React.createElement('button', {
-        type: 'submit',
-        disabled: sending || !newMessage.trim(),
-        className: 'btn primary',
-        style: { borderRadius: 25 }
-      }, sending ? 'Thinking...' : 'Send')
+      React.createElement('input', { type: 'text', value: newMessage, onChange: (e) => setNewMessage(e.target.value), placeholder: aiEnabled ? 'Message with AI...' : 'Type a message...', disabled: sending, className: 'chat-input' }),
+      React.createElement('button', { type: 'submit', disabled: sending || !newMessage.trim(), className: 'btn primary' }, sending ? 'Thinking...' : 'Send')
     )
   );
 }
@@ -1155,9 +918,9 @@ function Login({ onLoggedIn, go }) {
     React.createElement('h2', { className: 'mt-0' }, 'Log in'),
     error && React.createElement('div', { className: 'gcapp-error' }, error),
     React.createElement('form', { onSubmit: handleSubmit, className: 'gcapp-authForm', autoComplete: 'on' },
-      React.createElement('label', { style: styles.label }, 'Username',
+      React.createElement('label', { className: 'gcapp-label' }, 'Username',
         React.createElement('input', {
-          style: styles.input,
+          className: 'gcapp-input',
           type: 'text',
           required: true,
           value: username,
@@ -1165,9 +928,9 @@ function Login({ onLoggedIn, go }) {
           autoComplete: 'username'
         })
       ),
-      React.createElement('label', { style: styles.label }, 'Password',
+      React.createElement('label', { className: 'gcapp-label' }, 'Password',
         React.createElement('input', {
-          style: styles.input,
+          className: 'gcapp-input',
           type: 'password',
           required: true,
           value: password,
@@ -1175,11 +938,11 @@ function Login({ onLoggedIn, go }) {
           autoComplete: 'current-password'
         })
       ),
-      React.createElement('button', { type: 'submit', style: { ...styles.btn, ...styles.btnPrimary } }, 'Log in')
+      React.createElement('button', { type: 'submit', className: 'btn primary' }, 'Log in')
     ),
     React.createElement('div', { style: { marginTop: 12 } },
       React.createElement('button', {
-        style: styles.linkBtn,
+        className: 'gcapp-linkBtn',
         onClick: (e) => { e.preventDefault(); go('/signup'); },
         'aria-label': 'Don\'t have an account? Sign up',
         title: 'Don\'t have an account? Sign up'
@@ -1206,13 +969,13 @@ function Signup({ onLoggedIn, go }) {
     }
   }
 
-  return React.createElement('div', { style: styles.panel },
-    React.createElement('h2', { style: { marginTop: 0 } }, 'Sign up'),
-    error && React.createElement('div', { style: styles.error }, error),
-    React.createElement('form', { onSubmit: handleSubmit, style: styles.authForm, autoComplete: 'on' },
-      React.createElement('label', { style: styles.label }, 'Name',
+  return React.createElement('div', { className: 'gcapp-panel' },
+    React.createElement('h2', { className: 'mt-0' }, 'Sign up'),
+    error && React.createElement('div', { className: 'gcapp-error' }, error),
+    React.createElement('form', { onSubmit: handleSubmit, className: 'gcapp-authForm', autoComplete: 'on' },
+      React.createElement('label', { className: 'gcapp-label' }, 'Name',
         React.createElement('input', {
-          style: styles.input,
+          className: 'gcapp-input',
           type: 'text',
           required: true,
           value: name,
@@ -1220,9 +983,9 @@ function Signup({ onLoggedIn, go }) {
           autoComplete: 'name'
         })
       ),
-      React.createElement('label', { style: styles.label }, 'Username',
+      React.createElement('label', { className: 'gcapp-label' }, 'Username',
         React.createElement('input', {
-          style: styles.input,
+          className: 'gcapp-input',
           type: 'text',
           required: true,
           value: username,
@@ -1230,9 +993,9 @@ function Signup({ onLoggedIn, go }) {
           autoComplete: 'username'
         })
       ),
-      React.createElement('label', { style: styles.label }, 'Password',
+      React.createElement('label', { className: 'gcapp-label' }, 'Password',
         React.createElement('input', {
-          style: styles.input,
+          className: 'gcapp-input',
           type: 'password',
           required: true,
           value: password,
@@ -1240,7 +1003,15 @@ function Signup({ onLoggedIn, go }) {
           autoComplete: 'new-password'
         })
       ),
-      React.createElement('button', { type: 'submit', style: { ...styles.btn, ...styles.btnPrimary } }, 'Create account')
+      React.createElement('button', { type: 'submit', className: 'btn primary' }, 'Create account')
+    ),
+    React.createElement('div', { style: { marginTop: 12 } },
+      React.createElement('button', {
+        className: 'gcapp-linkBtn',
+        onClick: (e) => { e.preventDefault(); go('/login'); },
+        'aria-label': 'Already have an account? Log in',
+        title: 'Already have an account? Log in'
+      }, 'Already have an account? Log in')
     )
   );
 }
@@ -1354,6 +1125,22 @@ function App() {
   const [path, go] = usePathname();
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
+  const [theme, setTheme] = useState(() => {
+    try {
+      const t = localStorage.getItem('theme');
+      if (t === 'dark' || t === 'light') return t;
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      return prefersDark ? 'dark' : 'light';
+    } catch { return 'light'; }
+  });
+
+  useEffect(() => {
+    if (theme === 'dark') document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+    try { localStorage.setItem('theme', theme); } catch {}
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
   useEffect(() => {
     (async () => {
@@ -1369,9 +1156,7 @@ function App() {
   }, []);
 
   async function handleLogout() {
-    try {
-      await api('POST', '/api/logout', {});
-    } catch {}
+    try { await api('POST', '/api/logout', {}); } catch {}
     setUser(null);
     go('/');
   }
@@ -1400,7 +1185,7 @@ function App() {
   }
 
   return React.createElement('div', { className: 'gcapp-app' },
-    React.createElement(Navbar, { user, onLogout: handleLogout, go }),
+    React.createElement(Navbar, { user, onLogout: handleLogout, go, theme, toggleTheme }),
     React.createElement('main', { className: 'gcapp-container' },
       !ready ? React.createElement('div', { className: 'gcapp-panel' }, 'Loading...') : renderRoute()
     )

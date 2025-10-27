@@ -20,6 +20,12 @@ app.db
 .DS_Store
 Thumbs.db
 
+# Node modules (not needed for build-only client)
+node_modules/
+client/node_modules/
+client/src/
+client/public/
+
 # JetBrains IDE (PyCharm/IDEA) project files
 # By default, ignore the entire .idea directory to avoid user-specific files being committed.
 .idea/

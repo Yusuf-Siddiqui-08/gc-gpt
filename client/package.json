@@ -1,9 +1,5 @@
 {
   "name": "gc-gpt-client",
   "private": true,
-  "version": "0.1.0",
-  "scripts": {
-    "clean": "powershell -NoProfile -Command \"Remove-Item -Recurse -Force .\\build -ErrorAction SilentlyContinue\"",
-    "build": "npm run clean && powershell -NoProfile -Command \"New-Item -ItemType Directory -Force .\\build | Out-Null; Copy-Item -Recurse -Force .\\src\\* .\\build\\\""
-  }
+  "version": "0.1.0"
 }
