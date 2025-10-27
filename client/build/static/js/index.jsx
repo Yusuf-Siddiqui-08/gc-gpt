@@ -1021,7 +1021,7 @@ function Chat({ chatId, user, go }) {
     );
   }
 
-  return React.createElement('div', { style: { height: '100%', display: 'flex', flexDirection: 'column', paddingBottom: '20px' } },
+  return React.createElement('div', { style: { height: '100vh', display: 'flex', flexDirection: 'column', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, paddingTop: '64px' } },
     React.createElement('div', {
       style: {
         padding: '16px 24px',
@@ -1067,14 +1067,14 @@ function Chat({ chatId, user, go }) {
       onSubmit: sendMessage,
       style: {
         padding: '16px 20px',
-        marginTop: '20px',
         borderRadius: '16px',
         border: '1px solid rgba(255,255,255,0.12)',
         background: 'rgba(255,255,255,0.08)',
         display: 'flex',
         gap: 12,
         alignItems: 'center',
-        flexShrink: 0
+        flexShrink: 0,
+        margin: '16px 20px 20px 20px'
       }
     },
       // AI Toggle Button

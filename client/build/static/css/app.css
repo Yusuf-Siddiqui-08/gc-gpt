@@ -10,7 +10,7 @@
   --radius: 14px;
 }
 * { box-sizing: border-box; }
-html, body { height: 100%; overflow: hidden; }
+html, body { height: 100%; overflow: auto; }
 body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
@@ -215,8 +215,8 @@ footer { padding: 40px 0; color: var(--muted); font-size: 14px; text-align: cent
 /* React app styles migrated from main.jsx */
 .gc-chatlogo { position: relative; width: 42px; height: 42px; }
 .gc-chatlogo-circle { border-radius: 50%; }
-.gcapp-app { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans"; color: #e5e7eb; background: linear-gradient(180deg, #0f172a, #111827); min-height: 100vh; height: 100vh; overflow: hidden; }
-.gcapp-container { width: 100%; max-width: 1500px; margin: 32px auto; padding: 0 16px; height: calc(100vh - 64px); overflow: hidden; }
+.gcapp-app { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans"; color: #e5e7eb; background: linear-gradient(180deg, #0f172a, #111827); min-height: 100vh; }
+.gcapp-container { width: 100%; max-width: 1500px; margin: 32px auto; padding: 0 16px; }
 .gcapp-navbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: rgba(17,24,39,0.7); backdrop-filter: blur(6px); position: sticky; top: 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .gcapp-brand { font-weight: 700; color: #fff; letter-spacing: 0.4px; text-decoration: none; cursor: pointer; }
 .gcapp-navRight { display: flex; align-items: center; gap: 10px; }
