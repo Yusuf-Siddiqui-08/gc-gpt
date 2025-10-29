@@ -389,7 +389,7 @@ function MyConversations({ user }) {
   return React.createElement(Conversations, { user });
 }
 
-function MessageItem({ msg, prevSenderId, onEdit, onDelete }) {
+function MessageItem({ msg, prevSenderId, onEdit, onDelete, isNewAiMessage }) {
   const [showOriginal, setShowOriginal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
@@ -397,6 +397,7 @@ function MessageItem({ msg, prevSenderId, onEdit, onDelete }) {
   const [isHovering, setIsHovering] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef(null);
+
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -458,8 +459,8 @@ function MessageItem({ msg, prevSenderId, onEdit, onDelete }) {
           !isSaving && React.createElement('button', { className: 'btn outline', onClick: handleCancelEdit, style: { fontSize: 12, padding: '6px 12px' } }, 'Cancel')
         )
       )
-    : React.createElement('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8, maxWidth: '88%', position: 'relative' } },
-        msg.is_self && isHovering && React.createElement('div', { ref: menuRef, style: { position: 'relative', display: 'flex', alignItems: 'center' } },
+    : React.createElement('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8, position: 'relative' } },
+        msg.is_self && isHovering && React.createElement('div', { ref: menuRef, style: { position: 'absolute', left: -32, top: 0, display: 'flex', alignItems: 'center', zIndex: 10 } },
           React.createElement('button', {
             onClick: (e) => { e.stopPropagation(); setShowMenu(!showMenu); },
             style: { background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 16, padding: 4, color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24 },
@@ -472,7 +473,7 @@ function MessageItem({ msg, prevSenderId, onEdit, onDelete }) {
             React.createElement('button', { onClick: handleDeleteClick, style: { width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', padding: '10px 12px', color: '#ef4444', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, borderRadius: 8 }, title: 'Delete message' }, '🗑️', ' Delete')
           )
         ),
-        React.createElement('div', { className: `chat-bubble ${msg.is_self ? 'me' : 'other'}` , dangerouslySetInnerHTML: { __html: msg.content } })
+        React.createElement('div', { className: `chat-bubble ${msg.is_self ? 'me' : 'other'}${(msg.sender_username === 'AI' || msg.user_username === 'AI') ? ' ai-message' : ''}${isNewAiMessage ? ' new-ai' : ''}` , dangerouslySetInnerHTML: { __html: msg.content } })
       );
 
   const original = showOriginal && msg.original_content && React.createElement('div', {
@@ -505,6 +506,8 @@ function Chat({ chatId, user, go }) {
   const lastTypesetIdRef = useRef(0);
   const isInitialLoadRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
+  const newAiMessageIdsRef = useRef(new Set());
+  const [newAiMessageIds, setNewAiMessageIds] = useState(new Set());
 
   useEffect(() => {
     if (!user) {
@@ -697,6 +700,17 @@ function Chat({ chatId, user, go }) {
       // If there's an AI response, add it too
       if (res.ai_message) {
         setMessages(prev => [...prev, res.ai_message]);
+        // Mark this AI message as new for the pulse animation
+        const aiMsgId = res.ai_message.id;
+        setNewAiMessageIds(prev => new Set([...prev, aiMsgId]));
+        // Remove the "new" flag after animation completes (2 seconds)
+        setTimeout(() => {
+          setNewAiMessageIds(prev => {
+            const updated = new Set(prev);
+            updated.delete(aiMsgId);
+            return updated;
+          });
+        }, 2000);
       }
     } catch (err) {
       alert('Failed to send message: ' + (err.data?.error || err.message));
@@ -778,6 +792,17 @@ function Chat({ chatId, user, go }) {
           // Only add the AI response
           if (aiRes.ai_message) {
             setMessages(prev => [...prev, aiRes.ai_message]);
+            // Mark this AI message as new for the pulse animation
+            const aiMsgId = aiRes.ai_message.id;
+            setNewAiMessageIds(prev => new Set([...prev, aiMsgId]));
+            // Remove the "new" flag after animation completes (2 seconds)
+            setTimeout(() => {
+              setNewAiMessageIds(prev => {
+                const updated = new Set(prev);
+                updated.delete(aiMsgId);
+                return updated;
+              });
+            }, 2000);
           }
         } catch (err) {
           console.error('Failed to get new AI response:', err);
@@ -849,16 +874,19 @@ function Chat({ chatId, user, go }) {
     return messages.map((msg, index) => {
       const prevMsg = index > 0 ? messages[index - 1] : null;
       const prevSenderId = prevMsg ? (prevMsg.user_username || prevMsg.sender_username) : null;
+      const isAiMessage = msg.sender_username === 'AI' || msg.user_username === 'AI';
+      const isNew = isAiMessage && newAiMessageIds.has(msg.id);
 
       return React.createElement(MessageItem, {
         key: msg.id,
         msg: msg,
         prevSenderId: prevSenderId,
         onEdit: handleEditMessage,
-        onDelete: handleDeleteMessage
+        onDelete: handleDeleteMessage,
+        isNewAiMessage: isNew
       });
     });
-  }, [messages]);
+  }, [messages, newAiMessageIds]);
 
   if (loading) {
     return React.createElement('div', { className: 'gcapp-panel' }, 'Loading chat...');
