@@ -63,11 +63,77 @@ def _is_postgres():
 USE_POSTGRES = _is_postgres()
 
 # ChatAgent configuration
-CHAT_MODEL = "deepseek-v3.1:671b-cloud"
-CHAT_MODEL_DISPLAY_NAME = "DeepSeek-V3.1 (671b Cloud)"
+DEFAULT_AI_MODEL_ID = "deepseek-v3.1:671b-cloud"
+AVAILABLE_AI_MODELS = [
+    {
+        "id": "deepseek-v3.1:671b-cloud",
+        "display_name": "DeepSeek-V3.1 (671b Cloud)",
+        "short_label": "DeepSeek V3",
+        "emoji": "🌀",
+        "icon_key": "DeepSeek",
+        "brand_color": "#2b68ff",
+    },
+    {
+        "id": "gpt-oss:20b-cloud",
+        "display_name": "GPT-OSS (20b Cloud)",
+        "short_label": "GPT-OSS 20B",
+        "emoji": "⚙️",
+        "icon_key": "OpenAI",
+        "brand_color": "#0e9c86",
+    },
+    {
+        "id": "gpt-oss:120b-cloud",
+        "display_name": "GPT-OSS (120b Cloud)",
+        "short_label": "GPT-OSS 120B",
+        "emoji": "🧠",
+        "icon_key": "OpenAI",
+        "brand_color": "#0e9c86",
+    },
+    {
+        "id": "kimi-k2:1t-cloud",
+        "display_name": "Kimi-K2 (1t Cloud)",
+        "short_label": "Kimi-K2 1T",
+        "emoji": "🌌",
+        "icon_key": "Kimi",
+        "brand_color": "#5b5bed",
+    },
+    {
+        "id": "qwen3-coder:480b-cloud",
+        "display_name": "Qwen3-Coder (480b Cloud)",
+        "short_label": "Qwen3 Coder",
+        "emoji": "💻",
+        "icon_key": "Qwen",
+        "brand_color": "#00c1de",
+    },
+    {
+        "id": "glm-4.6:cloud",
+        "display_name": "GLM-4.6 (Cloud)",
+        "short_label": "GLM 4.6",
+        "emoji": "⚡",
+        "icon_key": "GLMV",
+        "brand_color": "#00b578",
+    },
+    {
+        "id": "qwen3-vl:235b-cloud",
+        "display_name": "Qwen3-VL (235b Cloud)",
+        "short_label": "Qwen3 VL",
+        "emoji": "🖼️",
+        "icon_key": "Qwen",
+        "brand_color": "#00c1de",
+    }
+]
+AI_MODEL_LOOKUP = {model['id']: model for model in AVAILABLE_AI_MODELS}
 
-def get_chat_agent(messages=None):
-    return ChatAgent(model=CHAT_MODEL, messages=messages)
+
+def get_ai_model_config(model_id=None):
+    if not model_id or model_id not in AI_MODEL_LOOKUP:
+        return AI_MODEL_LOOKUP[DEFAULT_AI_MODEL_ID]
+    return AI_MODEL_LOOKUP[model_id]
+
+
+def get_chat_agent(messages=None, model_id=None):
+    model_cfg = get_ai_model_config(model_id)
+    return ChatAgent(model=model_cfg['id'], messages=messages)
 
 # SQL loader
 _SQL_CACHE = {}
@@ -199,6 +265,8 @@ def init_db():
                     cur.execute("ALTER TABLE messages ADD COLUMN edited_at TIMESTAMP")
                 if 'original_content' not in msg_cols:
                     cur.execute("ALTER TABLE messages ADD COLUMN original_content TEXT")
+                if 'ai_model_id' not in msg_cols:
+                    cur.execute("ALTER TABLE messages ADD COLUMN ai_model_id TEXT")
             except Exception:
                 pass
         else:
@@ -210,6 +278,8 @@ def init_db():
                     cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMP")
                 if 'original_content' not in msg_cols:
                     cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS original_content TEXT")
+                if 'ai_model_id' not in msg_cols:
+                    cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS ai_model_id TEXT")
             except Exception:
                 pass
 
@@ -314,7 +384,8 @@ def me():
         if color:
             user = {**user, 'profile_color': color}
             session['user'] = user
-    return jsonify({'user': user})
+    model_id = session.get('ai_model_id') or DEFAULT_AI_MODEL_ID
+    return jsonify({'user': user, 'ai_model_id': model_id})
 
 
 @app.route('/api/signup', methods=['POST'])
@@ -688,12 +759,11 @@ def api_list_messages(chat_id):
         uname = (m.get('user_username') or m.get('username') or m.get('sender_username') or '').lower()
         m['is_self'] = (uname == current_username)
 
-        # Hydrate AI message metadata (sender_name and profile_color)
-        if m.get('sender_username') == 'AI' and not m.get('sender_name'):
-            m['sender_name'] = f'AI - {CHAT_MODEL_DISPLAY_NAME}'
-            m['sender_profile_color'] = '#3b82f6'  # Blue color for AI
+        if m.get('sender_username') == 'AI':
+            meta = get_ai_model_config(m.get('ai_model_id'))
+            m['sender_name'] = f"AI - {meta['display_name']}"
+            m['sender_profile_color'] = '#3b82f6'
 
-        # Remove content_length from response (internal use only)
         m.pop('content_length', None)
 
     return jsonify({
@@ -723,7 +793,7 @@ def api_send_message(chat_id):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        cur.execute(load_sql('insert_message'), (chat_id, username, content, reply_to))
+        cur.execute(load_sql('insert_message'), (chat_id, username, content, reply_to, None))
         if USE_POSTGRES:
             result = cur.fetchone()
             msg_id = result[0] if isinstance(result, tuple) else result['id']
@@ -749,11 +819,13 @@ def api_send_message(chat_id):
         ai_query = content[3:].strip()
         if ai_query:
             try:
+                model_id = session.get('ai_model_id') or DEFAULT_AI_MODEL_ID
+
                 # Get chat history for context (excluding the current message we just inserted)
                 conn3 = get_db_connection()
                 try:
                     cur = conn3.cursor()
-                    cur.execute(load_sql('list_messages_for_chat'), (chat_id, msg_id, msg_id, 20))
+                    cur.execute(load_sql('list_messages_for_chat'), (chat_id, msg_id, msg_id, 50))
                     history_rows = [row_to_dict(r, cur) for r in cur.fetchall()]
                 finally:
                     conn3.close()
@@ -771,12 +843,11 @@ def api_send_message(chat_id):
                 filtered_history = ChatAgent.filter_relevant_messages(
                     query=ai_query,
                     messages=chat_history,
-                    model=CHAT_MODEL,
-                    max_messages=6  # Limit to most recent relevant messages
+                    model=model_id,
+                    max_messages=6
                 )
 
-                # Create ChatAgent with filtered history and send message
-                agent = get_chat_agent(messages=filtered_history)
+                agent = get_chat_agent(messages=filtered_history, model_id=model_id)
                 response = agent.send_message(ai_query)
                 ai_response = agent.get_last_assistant_message()
 
@@ -791,22 +862,21 @@ def api_send_message(chat_id):
                     # Insert AI response as a message from "AI" user
                     conn2 = get_db_connection()
                     try:
-                        cur = conn2.cursor()
-                        cur.execute(load_sql('insert_message'), (chat_id, 'AI', formatted_response, msg_id))
+                        cur2 = conn2.cursor()
+                        cur2.execute(load_sql('insert_message'), (chat_id, 'AI', formatted_response, msg_id, model_id))
                         if USE_POSTGRES:
-                            result = cur.fetchone()
+                            result = cur2.fetchone()
                             ai_msg_id = result[0] if isinstance(result, tuple) else result['id']
                         else:
-                            ai_msg_id = cur.lastrowid
+                            ai_msg_id = cur2.lastrowid
                         conn2.commit()
-                        cur2 = conn2.cursor()
                         cur2.execute(load_sql('get_message_by_id'), (ai_msg_id,))
                         ai_row = cur2.fetchone()
+                        ai_msg = row_to_dict(ai_row, cur2)
                     finally:
                         conn2.close()
-
-                    ai_msg = row_to_dict(ai_row, cur2)
-                    ai_msg['sender_name'] = f'AI - {CHAT_MODEL_DISPLAY_NAME} ({response_time_s:.1f}s)'
+                    ai_meta = get_ai_model_config(model_id)
+                    ai_msg['sender_name'] = f"AI - {ai_meta['display_name']} ({response_time_s:.1f}s)"
                     ai_msg['sender_profile_color'] = '#3b82f6'  # Blue color for AI
                     ai_msg['is_self'] = False
                     
@@ -1044,6 +1114,25 @@ def api_admin_clear_db():
             'chat_members': members_before,
         }
     }), 200
+
+@app.route('/api/ai/models', methods=['GET'])
+def api_list_ai_models():
+    return jsonify({
+        'models': AVAILABLE_AI_MODELS,
+        'default_model_id': DEFAULT_AI_MODEL_ID,
+        'active_model_id': session.get('ai_model_id') or DEFAULT_AI_MODEL_ID
+    })
+
+
+@app.route('/api/ai/model', methods=['POST'])
+def api_set_ai_model():
+    data = request.get_json(silent=True) or {}
+    requested_model = (data.get('model_id') or '').strip()
+    if requested_model not in AI_MODEL_LOOKUP:
+        return jsonify({'error': 'Unknown AI model.'}), 400
+    session['ai_model_id'] = requested_model
+    return jsonify({'model': get_ai_model_config(requested_model)})
+
 
 # Serve the React app's index.html for root and all other client-side routes
 @app.route('/', defaults={'path': ''})

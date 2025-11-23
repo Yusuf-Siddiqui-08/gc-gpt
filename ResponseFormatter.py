@@ -54,7 +54,6 @@ class ResponseFormatter:
             text,
             extensions=[
                 'tables',     # Table support
-                'nl2br',      # Convert newlines to <br> tags
                 'sane_lists', # Better list handling
             ]
         )
@@ -109,7 +108,7 @@ class ResponseFormatter:
             if latex_type == 'display':
                 # Use display math delimiters that MathJax/KaTeX will recognize
                 placeholder = f"<!--LATEX_DISPLAY_{i}-->"
-                latex_html = f'<div class="math-display" style="margin: 15px 0; text-align: center; overflow-x: auto;">\\[{latex_content}\\]</div>'
+                latex_html = f'<div class="math-display" style="margin: 15px 0; text-align: center; max-width: 100%;">\\[{latex_content}\\]</div>'
                 html = html.replace(placeholder, latex_html)
             else:  # inline
                 # Use inline math delimiters

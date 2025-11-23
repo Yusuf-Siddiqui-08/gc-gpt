@@ -96,19 +96,21 @@ CREATE TABLE IF NOT EXISTS messages (
     reply_to INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     edited_at TIMESTAMP,
-    original_content TEXT
+    original_content TEXT,
+    ai_model_id TEXT
 );
 
 -- name: create_index_messages_chat
 CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages(chat_id, created_at);
 
 -- name: insert_message
-INSERT INTO messages (chat_id, sender_username, content, reply_to)
-VALUES (%s, %s, %s, %s) RETURNING id;
+INSERT INTO messages (chat_id, sender_username, content, reply_to, ai_model_id)
+VALUES (%s, %s, %s, %s, %s) RETURNING id;
 
 -- name: list_messages_for_chat
 SELECT m.id, m.chat_id, m.sender_username, m.content, m.reply_to, m.created_at, m.edited_at, m.original_content,
-       u.name AS sender_name, COALESCE(u.profile_color, '') AS sender_profile_color
+       u.name AS sender_name, COALESCE(u.profile_color, '') AS sender_profile_color,
+       m.ai_model_id
 FROM messages m
 LEFT JOIN users u ON u.username = m.sender_username
 WHERE m.chat_id = %s AND (m.id < %s OR %s IS NULL)
@@ -116,14 +118,16 @@ ORDER BY m.id DESC
 LIMIT %s;
 
 -- name: get_message_by_id
-SELECT id, chat_id, sender_username, content, reply_to, created_at
+SELECT id, chat_id, sender_username, content, reply_to, created_at, edited_at, original_content,
+       ai_model_id
 FROM messages
 WHERE id = %s;
 
 -- name: list_messages_by_content_length
 SELECT m.id, m.chat_id, m.sender_username, m.content, m.reply_to, m.created_at, m.edited_at, m.original_content,
        u.name AS sender_name, COALESCE(u.profile_color, '') AS sender_profile_color,
-       LENGTH(m.content) AS content_length
+       LENGTH(m.content) AS content_length,
+       m.ai_model_id
 FROM messages m
 LEFT JOIN users u ON u.username = m.sender_username
 WHERE m.chat_id = %s AND (m.id < %s OR %s IS NULL)

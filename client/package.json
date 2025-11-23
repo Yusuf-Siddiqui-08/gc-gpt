@@ -1,5 +1,14 @@
 {
   "name": "gc-gpt-client",
   "private": true,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "scripts": {
+    "build": "echo \"frontend build is committed\"",
+    "start": "python -m http.server"
+  },
+  "dependencies": {
+    "@lobehub/icons": "^2.43.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
 }

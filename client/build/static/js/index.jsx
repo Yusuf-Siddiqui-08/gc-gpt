@@ -1,6 +1,9 @@
 // React and ReactDOM are loaded via CDN in index.html
 const { useState, useEffect, useRef, useMemo } = React;
 
+// Import icons from local icons module
+import { IconMap } from './icons.jsx';
+
 // Derived avatar style used for user initials
 const avatarStyle = {
   width: 24,
@@ -126,9 +129,9 @@ function Navbar({ user, onLogout, go, theme, toggleTheme }) {
         },
           React.createElement('span', {
             className: 'gcapp-avatar',
-            style: { background: (user && user.profile_color) ? user.profile_color : colorFromString(user?.username || user?.name) },
+            style: { background: (user && user.profile_color) ? user.profile_color : colorFromString(user ? (user.username || user.name) : '') },
             'aria-hidden': 'true'
-          }, nameInitials(user?.name)),
+          }, nameInitials(user ? user.name : '')),
           React.createElement('span', null, user.name)
         ),
         open && React.createElement('div', { className: 'gcapp-dropdown' },
@@ -218,7 +221,7 @@ function Conversations({ user }) {
             className: 'btn outline',
             onClick: (e) => {
               e.stopPropagation();
-              navigator.clipboard?.writeText(c.id)
+              if (navigator.clipboard) navigator.clipboard.writeText(c.id);
             }
           }, 'Copy ID')
         )
@@ -238,7 +241,7 @@ function Conversations({ user }) {
 
 function Modal({ title, onClose, children }) {
   useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onClose?.(); }
+    function onKey(e) { if (e.key === 'Escape' && onClose) onClose(); }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
@@ -248,7 +251,7 @@ function Modal({ title, onClose, children }) {
     role: 'dialog',
     'aria-modal': 'true',
     style: { display: 'flex' },
-    onClick: (e) => { if (e.target === e.currentTarget) onClose?.(); }
+    onClick: (e) => { if (e.target === e.currentTarget && onClose) onClose(); }
   },
     React.createElement('div', { className: 'modal' },
       React.createElement('header', null,
@@ -279,11 +282,11 @@ function ChatModal({ onClose, onChanged }) {
     if (!createName || !createPw) { setError('Name and password are required.'); return; }
     try {
       const res = await api('POST', '/api/chats', { name: createName, password: createPw });
-      alert(`Chat created. Share this ID with others: ${res.chat?.id || ''}`);
-      onClose?.();
-      onChanged?.();
+      alert(`Chat created. Share this ID with others: ${(res.chat && res.chat.id) || ''}`);
+      if (onClose) onClose();
+      if (onChanged) onChanged();
     } catch (err) {
-      setError(err.data?.error || 'Failed to create chat.');
+      setError((err.data && err.data.error) || 'Failed to create chat.');
     }
   }
 
@@ -293,11 +296,11 @@ function ChatModal({ onClose, onChanged }) {
     if (!joinId || !joinPw) { setError('Chat ID and password are required.'); return; }
     try {
       const res = await api('POST', '/api/chats/join', { chat_id: joinId, password: joinPw });
-      alert(`Joined chat: ${res.chat?.name || joinId}`);
-      onClose?.();
-      onChanged?.();
+      alert(`Joined chat: ${(res.chat && res.chat.name) || joinId}`);
+      if (onClose) onClose();
+      if (onChanged) onChanged();
     } catch (err) {
-      setError(err.data?.error || 'Failed to join chat.');
+      setError((err.data && err.data.error) || 'Failed to join chat.');
     }
   }
 
@@ -499,6 +502,12 @@ function Chat({ chatId, user, go }) {
   const [aiEnabled, setAiEnabled] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [aiModels, setAiModels] = useState([]);
+  const [activeModelId, setActiveModelId] = useState(null);
+  const [defaultModelId, setDefaultModelId] = useState(null);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelTooltipVisible, setModelTooltipVisible] = useState(false);
+  const [tooltipShouldFade, setTooltipShouldFade] = useState(false);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -508,23 +517,161 @@ function Chat({ chatId, user, go }) {
   const previousScrollHeightRef = useRef(0);
   const newAiMessageIdsRef = useRef(new Set());
   const [newAiMessageIds, setNewAiMessageIds] = useState(new Set());
+  const aiButtonRef = useRef(null);
+  const modelPickerRef = useRef(null);
+  const longPressTimeoutRef = useRef(null);
+  const longPressTriggeredRef = useRef(false);
+  const tooltipTimeoutRef = useRef(null);
+  const hoverTimeoutRef = useRef(null);
+  const LONG_PRESS_DELAY_MS = 550;
+  const HOVER_DELAY_MS = 500;
+
+  const refreshAiModels = async () => {
+    try {
+      const res = await api('GET', '/api/ai/models');
+      setAiModels(res.models || []);
+      setActiveModelId(res.active_model_id || res.default_model_id || null);
+      setDefaultModelId(res.default_model_id || null);
+    } catch (err) {
+      console.error('Failed to load AI models', err);
+    }
+  };
 
   useEffect(() => {
-    if (!user) {
-      go('/login');
+    refreshAiModels();
+  }, []);
+
+  useEffect(() => {
+    loadChat();
+  }, [chatId]);
+
+  useEffect(() => () => {
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+    if (tooltipTimeoutRef.current) {
+      clearTimeout(tooltipTimeoutRef.current);
+      tooltipTimeoutRef.current = null;
+    }
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!modelPickerOpen) return;
+    const handlePointerDown = (event) => {
+      if (modelPickerRef.current && modelPickerRef.current.contains(event.target)) return;
+      if (aiButtonRef.current && aiButtonRef.current.contains(event.target)) return;
+      setModelPickerOpen(false);
+    };
+    const handleKey = (event) => {
+      if (event.key === 'Escape') setModelPickerOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown, { passive: true });
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [modelPickerOpen]);
+
+  const openModelPicker = () => {
+    if (!aiModels.length) {
+      refreshAiModels();
+    }
+    setModelPickerOpen(true);
+  };
+
+  const closeModelPicker = () => setModelPickerOpen(false);
+
+  const handleAiButtonClick = (event) => {
+    if (longPressTriggeredRef.current) {
+      event.preventDefault();
+      longPressTriggeredRef.current = false;
       return;
     }
-    loadChat();
+    setAiEnabled((prev) => !prev);
 
-    // Poll for new messages every 2 seconds
-    const pollInterval = setInterval(() => {
-      if (!sending) {
-        checkForNewMessages();
-      }
+    // Show tooltip for 2 seconds with fade
+    setModelTooltipVisible(true);
+    setTooltipShouldFade(true);
+    if (tooltipTimeoutRef.current) {
+      clearTimeout(tooltipTimeoutRef.current);
+    }
+    tooltipTimeoutRef.current = setTimeout(() => {
+      setModelTooltipVisible(false);
+      setTooltipShouldFade(false);
     }, 2000);
+  };
 
-    return () => clearInterval(pollInterval);
-  }, [chatId, user]);
+  const handleAiButtonHover = () => {
+    // Clear any existing hover timeout
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    // Show tooltip after hover delay
+    hoverTimeoutRef.current = setTimeout(() => {
+      setModelTooltipVisible(true);
+      setTooltipShouldFade(false);
+      if (tooltipTimeoutRef.current) {
+        clearTimeout(tooltipTimeoutRef.current);
+      }
+    }, HOVER_DELAY_MS);
+  };
+
+  const handleAiButtonLeave = () => {
+    // Clear hover timeout if user leaves before delay completes
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setModelTooltipVisible(false);
+    setTooltipShouldFade(false);
+    if (tooltipTimeoutRef.current) {
+      clearTimeout(tooltipTimeoutRef.current);
+    }
+  };
+
+  const clearLongPressTimer = () => {
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+  };
+
+  const handleAiButtonPointerDown = (event) => {
+    if (event.type === 'mousedown' && event.button !== 0) return;
+    clearLongPressTimer();
+    longPressTriggeredRef.current = false;
+    longPressTimeoutRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      openModelPicker();
+    }, LONG_PRESS_DELAY_MS);
+  };
+
+  const handleAiButtonPointerUp = () => {
+    clearLongPressTimer();
+  };
+
+  const handleModelSelect = async (modelId) => {
+    if (!modelId || modelId === (activeModelId || defaultModelId)) {
+      closeModelPicker();
+      return;
+    }
+    try {
+      const res = await api('POST', '/api/ai/model', { model_id: modelId });
+      const updatedId = (res && res.model && res.model.id) || modelId;
+      setActiveModelId(updatedId);
+      closeModelPicker();
+    } catch (err) {
+      alert((err.data && err.data.error) || 'Failed to switch AI model.');
+    }
+  };
 
   // Optimized MathJax typesetting - only process new messages
   useEffect(() => {
@@ -621,7 +768,7 @@ function Chat({ chatId, user, go }) {
 
     setLoadingOlder(true);
     const container = messagesContainerRef.current;
-    const oldScrollHeight = container?.scrollHeight || 0;
+    const oldScrollHeight = container ? (container.scrollHeight || 0) : 0;
     previousScrollHeightRef.current = oldScrollHeight;
 
     try {
@@ -713,7 +860,7 @@ function Chat({ chatId, user, go }) {
         }, 2000);
       }
     } catch (err) {
-      alert('Failed to send message: ' + (err.data?.error || err.message));
+      alert('Failed to send message: ' + ((err.data && err.data.error) || err.message));
     } finally {
       setSending(false);
     }
@@ -762,8 +909,8 @@ function Chat({ chatId, user, go }) {
             content: `/AI ${newContent}`
           });
 
-          const duplicateMessageId = aiRes.message?.id;
-          const aiMessageId = aiRes.ai_message?.id;
+          const duplicateMessageId = aiRes.message ? aiRes.message.id : null;
+          const aiMessageId = aiRes.ai_message ? aiRes.ai_message.id : null;
 
           // Delete the duplicate user message that was just created
           if (duplicateMessageId) {
@@ -811,7 +958,7 @@ function Chat({ chatId, user, go }) {
         }
       }
     } catch (err) {
-      alert('Failed to edit message: ' + (err.data?.error || err.message));
+      alert('Failed to edit message: ' + ((err.data && err.data.error) || err.message));
     }
   }
 
@@ -855,7 +1002,7 @@ function Chat({ chatId, user, go }) {
       setMessages(prev => prev.filter(m => m.id !== messageId));
 
     } catch (err) {
-      alert('Failed to delete message: ' + (err.data?.error || err.message));
+      alert('Failed to delete message: ' + ((err.data && err.data.error) || err.message));
     }
   }
 
@@ -916,8 +1063,63 @@ function Chat({ chatId, user, go }) {
       )
     ),
     React.createElement('form', { onSubmit: sendMessage, className: 'chat-composer' },
-      React.createElement('button', { type: 'button', onClick: () => setAiEnabled(!aiEnabled), 'aria-label': aiEnabled ? 'AI mode enabled' : 'Enable AI mode', title: aiEnabled ? 'AI mode enabled - next message will include /AI' : 'Enable AI mode', className: 'gc-composer-left', style: { border: aiEnabled ? '2px solid var(--chart-2)' : undefined, color: aiEnabled ? 'var(--chart-2)' : undefined } },
-        React.createElement('span', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '🤖')
+      React.createElement('div', { className: 'ai-mode-wrapper' },
+        React.createElement('button', {
+          ref: aiButtonRef,
+          type: 'button',
+          onClick: handleAiButtonClick,
+          onMouseDown: handleAiButtonPointerDown,
+          onMouseUp: handleAiButtonPointerUp,
+          onMouseEnter: handleAiButtonHover,
+          onMouseLeave: (e) => {
+            handleAiButtonPointerUp();
+            handleAiButtonLeave();
+          },
+          onTouchStart: handleAiButtonPointerDown,
+          onTouchEnd: handleAiButtonPointerUp,
+          'aria-label': aiEnabled ? 'AI mode enabled' : 'Enable AI mode',
+          title: aiEnabled ? 'AI mode enabled - next message will include /AI' : 'Enable AI mode',
+          className: 'gc-composer-left',
+          style: {
+            border: aiEnabled ? '2px solid var(--chart-2)' : undefined,
+            color: aiEnabled ? 'var(--chart-2)' : undefined,
+            position: 'relative'
+          }
+        },
+          React.createElement('span', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '🤖')
+        ),
+        modelTooltipVisible && React.createElement('div', {
+          className: `ai-model-tooltip${tooltipShouldFade ? ' fade-out' : ''}`,
+          style: {
+            opacity: modelTooltipVisible ? 1 : 0
+          }
+        }, ((aiModels.find((m) => m.id === (activeModelId || defaultModelId))) || {}).display_name || 'AI Model'),
+        modelPickerOpen && React.createElement('div', {
+          ref: modelPickerRef,
+          className: 'ai-model-picker',
+          role: 'menu',
+          'aria-label': 'Select AI model'
+        },
+          aiModels.length === 0 && React.createElement('div', { className: 'ai-model-picker-empty' }, 'Loading models...'),
+          aiModels.map((model) => {
+            const IconComponent = IconMap[model.icon_key];
+            return React.createElement('button', {
+              key: model.id,
+              type: 'button',
+              className: `ai-model-picker-item${model.id === (activeModelId || defaultModelId) ? ' active' : ''}`,
+              onClick: () => handleModelSelect(model.id)
+            },
+              React.createElement('span', { className: 'ai-model-picker-icon', style: { backgroundColor: model.brand_color || 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                IconComponent ? React.createElement(IconComponent, { size: 24 }) : React.createElement('span', null, model.emoji || '🤖')
+              ),
+              React.createElement('div', { className: 'ai-model-picker-info' },
+                React.createElement('div', { className: 'ai-model-picker-name' }, model.display_name),
+                React.createElement('div', { className: 'ai-model-picker-label' }, model.short_label)
+              ),
+              model.id === (activeModelId || defaultModelId) && React.createElement('span', { className: 'ai-model-picker-check' }, '✓')
+            );
+          })
+        )
       ),
       React.createElement('input', { type: 'text', value: newMessage, onChange: (e) => setNewMessage(e.target.value), placeholder: aiEnabled ? 'Message with AI...' : 'Type a message...', disabled: sending, className: 'chat-input' }),
       React.createElement('button', { type: 'submit', disabled: sending || !newMessage.trim(), className: 'btn primary' }, sending ? 'Thinking...' : 'Send')
@@ -938,7 +1140,7 @@ function Login({ onLoggedIn, go }) {
       onLoggedIn(res.user);
       go('/');
     } catch (err) {
-      setError(err.data?.error || 'Login failed.');
+      setError((err.data && err.data.error) || 'Login failed.');
     }
   }
 
@@ -993,7 +1195,7 @@ function Signup({ onLoggedIn, go }) {
       onLoggedIn(res.user);
       go('/');
     } catch (err) {
-      setError(err.data?.error || 'Sign up failed.');
+      setError((err.data && err.data.error) || 'Sign up failed.');
     }
   }
 
@@ -1080,7 +1282,7 @@ function ProfileSettings({ user, onSaved, go }) {
       setPassword('');
       alert('Profile updated.');
     } catch (err) {
-      alert(err.data?.error || 'Failed to apply changes.');
+      alert((err.data && err.data.error) || 'Failed to apply changes.');
     }
   }
 

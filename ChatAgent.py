@@ -8,11 +8,12 @@ ROLE_ASSISTANT: Literal["assistant"] = "assistant"
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
 
 class ChatAgent:
-    def __init__(self, model: str, messages: Optional[List[Dict[str, str]]] = None):
+    def __init__(self, model: str, messages: Optional[List[Dict[str, str]]] = None, host: str | None = None):
         self.model: str = model
         self.messages: List[Dict[str, str]] = list(messages) if messages is not None else []
+        target_host = host or os.getenv("OLLAMA_HOST", "https://ollama.com")
         self.client: Client = Client(
-            host="https://ollama.com",
+            host=target_host,
             headers={'Authorization': 'Bearer ' + OLLAMA_API_KEY}
         )
 
@@ -37,7 +38,7 @@ class ChatAgent:
         return None
 
     @staticmethod
-    def filter_relevant_messages(query: str, messages: List[Dict[str, str]], model: str, max_messages: int = 10) -> List[Dict[str, str]]:
+    def filter_relevant_messages(query: str, messages: List[Dict[str, str]], model: str, max_messages: int = 10, host: str | None = None) -> List[Dict[str, str]]:
         """
         Filter messages to only include those relevant to the current query.
         Uses the LLM to determine relevance based on topic similarity.
@@ -76,7 +77,7 @@ class ChatAgent:
 
         # Use LLM to score relevance of earlier conversation pairs
         client = Client(
-            host="https://ollama.com",
+            host=host or os.getenv("OLLAMA_HOST", "https://ollama.com"),
             headers={'Authorization': 'Bearer ' + OLLAMA_API_KEY}
         )
         for idx, pair in enumerate(conversation_pairs[:-1]):  # Skip the last one (already added)
