@@ -401,6 +401,17 @@ function MessageItem({ msg, prevSenderId, onEdit, onDelete, isNewAiMessage }) {
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef(null);
 
+  // Get AI model brand color (default to purple if not set)
+  const isAiMessage = msg.sender_username === 'AI' || msg.user_username === 'AI';
+  const aiBrandColor = msg.ai_brand_color || '#7c3aed';
+
+  // Helper to convert hex to rgba
+  const hexToRgba = (hex, alpha) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  };
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -476,7 +487,18 @@ function MessageItem({ msg, prevSenderId, onEdit, onDelete, isNewAiMessage }) {
             React.createElement('button', { onClick: handleDeleteClick, style: { width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', padding: '10px 12px', color: '#ef4444', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, borderRadius: 8 }, title: 'Delete message' }, '🗑️', ' Delete')
           )
         ),
-        React.createElement('div', { className: `chat-bubble ${msg.is_self ? 'me' : 'other'}${(msg.sender_username === 'AI' || msg.user_username === 'AI') ? ' ai-message' : ''}${isNewAiMessage ? ' new-ai' : ''}` , dangerouslySetInnerHTML: { __html: msg.content } })
+        React.createElement('div', {
+          className: `chat-bubble ${msg.is_self ? 'me' : 'other'}${(msg.sender_username === 'AI' || msg.user_username === 'AI') ? ' ai-message' : ''}${isNewAiMessage ? ' new-ai' : ''}`,
+          style: isAiMessage ? {
+            '--ai-color-base': hexToRgba(aiBrandColor, 0.35),
+            '--ai-color-glow-mid': hexToRgba(aiBrandColor, 0.5),
+            '--ai-color-glow-strong': hexToRgba(aiBrandColor, 0.8),
+            '--ai-color-glow-peak': hexToRgba(aiBrandColor, 0.8),
+            '--ai-color-bg': hexToRgba(aiBrandColor, 0.12),
+            '--ai-color-border': hexToRgba(aiBrandColor, 0.4)
+          } : {},
+          dangerouslySetInnerHTML: { __html: msg.content }
+        })
       );
 
   const original = showOriginal && msg.original_content && React.createElement('div', {

@@ -763,6 +763,7 @@ def api_list_messages(chat_id):
             meta = get_ai_model_config(m.get('ai_model_id'))
             m['sender_name'] = f"AI - {meta['display_name']}"
             m['sender_profile_color'] = '#3b82f6'
+            m['ai_brand_color'] = meta.get('brand_color', '#7c3aed')
 
         m.pop('content_length', None)
 
